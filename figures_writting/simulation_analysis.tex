@@ -104,16 +104,27 @@ We extended the model to investigate the effect of long-range thermal interactio
 
 \subsection{Simulation 4: Impact of Global Coupling}
 Figure~\ref{fig:sim4} compares the step response of the Center voxel between the Nearest-Neighbor (Blue) and Distance-Based (Red) models.
-The primary effect of the $1/d$ coupling is an increase in effective thermal inertia and crosstalk. The "Distance: Neighbor" trace (red dotted line) rises higher than the nearest-neighbor case, indicating that heat is "leaking" more efficiently to the surrounding volume. This diffusive effect requires the controller to apply slightly different power profiles to maintain the target, resulting in a marginally slower settling time for the target voxel as energy is wicked away to the far field more effectively.
+The primary effect of the $1/d$ coupling is an increase in effective thermal inertia and crosstalk. The "Distance: Neighbor" trace (red dotted line) rises clearly, indicating that heat is "leaking" via the direct $1/d$ coupling to the surrounding volume.
+
+In contrast, the far-field response (Corner Voxel, bottom panel) reveals a critical dynamic difference. For the Nearest-Neighbor model, the corner voxel temperature remains effectively constant ($20.0^\circ$C) over the 60-second window. This is physically expected: with $k_{ij} \approx 0.006\,\text{s}^{-1}$, the diffusion time constant is $\tau \approx 160\,\text{s}$. Heat must hop sequentially through two intervening voxels to reach the corner, a process that takes significantly longer than the simulation horizon. The Distance-Based model, however, acts as a "thermal short-circuit," allowing heat to radiate directly from the center to the corner, causing an immediate (albeit slow) rise.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{sim_outputs/sim4_comparison_step.png}
-    \caption{Comparison of step response for Nearest-Neighbor vs. Distance-Based coupling. The distance-based model (Red) shows increased thermal leakage to neighbors.}
+    \caption{Comparison of step response for Nearest-Neighbor vs. Distance-Based coupling. Note the flat response of the corner voxel in the nearest-neighbor case (blue solid), indicating that the diffusion wave has not yet reached the boundary.}
     \label{fig:sim4}
 \end{figure}
 
-Figure~\ref{fig:sim5} visualizes the steady-state difference for the gradient task. The "Diff" map (Bottom Right) reveals that the Distance-based model results in a smoother temperature field. The sharp gradient boundary is slightly more blurred, as heat from the hot zone (left) radiates directly to the cold zone (right) without needing to diffuse hop-by-hop through intermediate voxels. However, the LQR controller is robust enough to suppress these disturbances, keeping the absolute error magnitudes comparable to the local model.
+To verify the diffusion behavior, we extended the simulation to 600 seconds (10 minutes). Figure~\ref{fig:sim6} confirms that the Nearest-Neighbor model does eventually propagate heat to the corner, but with a significant time lag compared to the global coupling model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{sim_outputs/sim6_long_duration.png}
+    \caption{Long duration (600s) response of the corner voxel. The Nearest-Neighbor model (Blue) shows a distinct transport lag, while the Distance-Based model (Red) responds immediately due to direct coupling.}
+    \label{fig:sim6}
+\end{figure}
+
+Figure~\ref{fig:sim5} visualizes the steady-state difference for the gradient task. The "Diff" map (Bottom Right) reveals that the Distance-based model results in a smoother temperature field. The sharp gradient boundary is slightly more blurred, as heat from the hot zone (left) radiates directly to the cold zone (right). Specifically, the hot side is cooler (negative difference, purple) and the cold side is warmer (positive difference, green) compared to the local model, confirming that global coupling acts as a bypass for thermal resistance.
 
 \begin{figure}[H]
     \centering

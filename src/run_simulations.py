@@ -142,6 +142,43 @@ def run_simulation():
     # Sim 4a: Step Response Comparison
     t4, y4, u4, _, _ = simulate(model_distance, K_distance, y0_amb, T_target_1)
     
+    # --- EXTRA SIM: Long Duration Step Response ---
+    print("Running Long Duration Sim...")
+    duration_long = 600.0 # 10 minutes
+    steps_long = int(duration_long / dt)
+    time_long = np.linspace(0, duration_long, steps_long)
+    
+    # Re-define simulate for long duration (hacky but quick)
+    def simulate_long(model, K, y0, T_target_map):
+        y_star, u_star = model.get_steady_state(T_target_map)
+        y_current = y0.copy()
+        y_hist = np.zeros((steps_long, 2*N))
+        
+        for i in range(steps_long):
+            y_tilde = y_current - y_star
+            delta_u = -K @ y_tilde
+            u_applied = u_star + delta_u
+            u_applied = np.clip(u_applied, 0.0, params.P_MAX)
+            y_hist[i] = y_current
+            dy = model.sys.A @ y_current + model.sys.B @ u_applied + model.sys.E
+            y_current += dy * dt
+        return time_long, y_hist
+
+    t_long_near, y_long_near = simulate_long(model_nearest, K_nearest, y0_amb, T_target_1)
+    t_long_dist, y_long_dist = simulate_long(model_distance, K_distance, y0_amb, T_target_1)
+
+    fig6, ax6 = plt.subplots(figsize=(8, 6))
+    ax6.plot(t_long_near, y_long_near[:, 0], 'b-', label='Nearest: Corner')
+    ax6.plot(t_long_dist, y_long_dist[:, 0], 'r--', label='Distance: Corner')
+    ax6.set_title('Long Duration (600s) Far-Field Response')
+    ax6.set_ylabel('Temperature (°C)')
+    ax6.set_xlabel('Time (s)')
+    ax6.legend()
+    ax6.grid(True)
+    fig6.tight_layout()
+    fig6.savefig('figures_writting/sim_outputs/sim6_long_duration.png')
+    plt.close(fig6)
+
     fig4, (ax4a, ax4b) = plt.subplots(2, 1, figsize=(8, 10))
     
     # Center & Neighbor Response

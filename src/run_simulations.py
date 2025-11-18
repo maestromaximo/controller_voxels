@@ -136,6 +136,39 @@ def run_simulation():
     fig3.savefig('figures_writting/sim_outputs/sim3_gradient.png')
     plt.close(fig3)
 
+    # --- Simulation 3b: Long-Term Gradient (30 min) ---
+    print("Running Sim 3b: Long-Term Gradient (30 min)...")
+    duration_30m = 1800.0
+    steps_30m = int(duration_30m / dt)
+    # We can't store full history for 30m at 0.05s dt (36000 steps * 50 states) without waste
+    # Just run it and keep final state
+    
+    y_current = y0_amb.copy()
+    y_star, u_star = model_nearest.get_steady_state(T_target_3)
+    
+    for i in range(steps_30m):
+        y_tilde = y_current - y_star
+        delta_u = -K_nearest @ y_tilde
+        u_applied = u_star + delta_u
+        u_applied = np.clip(u_applied, 0.0, params.P_MAX)
+        dy = model_nearest.sys.A @ y_current + model_nearest.sys.B @ u_applied + model_nearest.sys.E
+        y_current += dy * dt
+
+    fig3b, axes = plt.subplots(2, 2, figsize=(10, 8))
+    T_final_30m = y_current[:N].reshape((NY, NX))
+    
+    plot_heatmap(axes[0,0], T_final_30m, 'Final Temp (30 min)', 'Temp (°C)', 20, 100)
+    plot_heatmap(axes[0,1], T_target_3, 'Target Temp', 'Temp (°C)', 20, 100)
+    # Recalculate final input for plotting
+    y_tilde = y_current - y_star
+    u_final_30m = np.clip(u_star - K_nearest @ y_tilde, 0.0, params.P_MAX)
+    plot_heatmap(axes[1,0], u_final_30m.reshape((NY, NX)), 'Steady State Power', 'Power (W)', 0, params.P_MAX, cmap='plasma')
+    plot_heatmap(axes[1,1], T_final_30m - T_target_3, 'Error (30 min)', 'Error (°C)', -5, 5, cmap='RdBu_r')
+    
+    fig3b.tight_layout()
+    fig3b.savefig('figures_writting/sim_outputs/sim3b_gradient_30m.png')
+    plt.close(fig3b)
+
     # --- Simulation 4: Distance-Based Coupling Comparison ---
     print("Running Distance-Based Sims...")
     

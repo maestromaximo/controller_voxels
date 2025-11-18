@@ -92,12 +92,14 @@ The inputs saturate at $5\text{W}$ initially. The temperature rises linearly whi
 \end{figure}
 
 \subsection{Simulation 3: Gradient Maintenance}
-The gradient test (Figure~\ref{fig:sim3}) demonstrates the high spatial resolution possible in this medium. Because $k_{ij}$ is small, the thermal crosstalk between the hot (left) and cold (right) zones is weak. The error map shows that the controller can maintain the $20^\circ$C target on the cold side with very little error, as the passive heat leak from the hot side is easily overwhelmed by natural environmental losses or simply results in a very slow temperature creep that the simulation horizon captures as a small steady-state offset.
+The gradient test (Figure~\ref{fig:sim3}) demonstrates the high spatial resolution possible in this medium. Because $k_{ij}$ is small, the thermal crosstalk between the hot (left) and cold (right) zones is weak. To ensure the system reached true equilibrium given the slow air diffusion, this simulation was run for 30 minutes (1800s).
+
+The error map reveals a fundamental limitation: while the hot side tracks perfectly, the voxels on the cold side boundary settle approximately $4^\circ$C above their target. This positive error persists because the controller commands 0W (bottom-left) but cannot actively remove the heat diffusing from the adjacent hot zone. This steady-state offset defines the resolution limit of the system for sharp gradients.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{sim_outputs/sim3_gradient.png}
-    \caption{Steady-state gradient maintenance. The low conductivity of air allows for sharp thermal gradients to be maintained with minimal error on the cold side.}
+    \includegraphics[width=\textwidth]{sim_outputs/sim3b_gradient_30m.png}
+    \caption{Steady-state gradient maintenance (30 min duration). The steady-state error on the cold boundary (dark red stripes) highlights the inability of the system to reject heat leakage from the hot zone.}
     \label{fig:sim3}
 \end{figure}
 

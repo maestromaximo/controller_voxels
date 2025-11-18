@@ -179,6 +179,104 @@ def run_simulation():
     fig6.savefig('figures_writting/sim_outputs/sim6_long_duration.png')
     plt.close(fig6)
 
+    # --- Simulation 7: The Impossible "Cold Trap" ---
+    print("Running Sim 7: Impossible Cold Trap...")
+    # Target: Center = 20C, Surroundings = 100C
+    T_target_7 = np.ones((NY, NX)) * 100.0
+    T_target_7[center_idx] = 20.0
+    
+    t7, y7, u7, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_7)
+    
+    fig7, (ax7a, ax7b) = plt.subplots(2, 1, figsize=(8, 10))
+    ax7a.plot(t7, y7[:, center_flat], label='Center Voxel (Target 20°C)')
+    ax7a.plot(t7, y7[:, neighbor_flat], label='Neighbor Voxel (Target 100°C)')
+    ax7a.axhline(20.0, color='g', linestyle='--', label='Center Target')
+    ax7a.axhline(100.0, color='r', linestyle='--', label='Neighbor Target')
+    ax7a.set_title('Sim 7: The "Impossible" Cold Center')
+    ax7a.set_ylabel('Temperature (°C)')
+    ax7a.set_xlabel('Time (s)')
+    ax7a.legend()
+    ax7a.grid(True)
+    
+    ax7b.plot(t7, u7[:, center_flat], label='Center Input')
+    ax7b.plot(t7, u7[:, neighbor_flat], label='Neighbor Input')
+    ax7b.set_ylabel('Power (W)')
+    ax7b.set_xlabel('Time (s)')
+    ax7b.set_title('Control Inputs (Center rails at 0W)')
+    ax7b.legend()
+    ax7b.grid(True)
+    
+    fig7.tight_layout()
+    fig7.savefig('figures_writting/sim_outputs/sim7_impossible_trap.png')
+    plt.close(fig7)
+
+    # --- Simulation 8: Long-Term Stability ---
+    print("Running Sim 8: Long-Term Stability (1 Hour)...")
+    duration_stability = 3600.0 # 1 hour
+    steps_stab = int(duration_stability / dt)
+    time_stab = np.linspace(0, duration_stability, steps_stab)
+    
+    # Striped Pattern (Columns)
+    T_target_8 = np.zeros((NY, NX))
+    for x in range(NX):
+        if x % 2 == 0:
+            T_target_8[:, x] = 80.0
+        else:
+            T_target_8[:, x] = 40.0
+                
+    # Reuse simulate_long logic but for this duration/target
+    def simulate_stability(model, K, y0, T_target_map):
+        y_star, u_star = model.get_steady_state(T_target_map)
+        y_current = y0.copy()
+        save_interval = 100
+        y_hist = np.zeros((steps_stab // save_interval, 2*N))
+        t_hist = time_stab[::save_interval]
+        
+        for i in range(steps_stab):
+            y_tilde = y_current - y_star
+            delta_u = -K @ y_tilde
+            u_applied = u_star + delta_u
+            u_applied = np.clip(u_applied, 0.0, params.P_MAX)
+            
+            if i % save_interval == 0:
+                idx = i // save_interval
+                if idx < len(y_hist):
+                    y_hist[idx] = y_current
+            
+            dy = model.sys.A @ y_current + model.sys.B @ u_applied + model.sys.E
+            y_current += dy * dt
+            
+        return t_hist, y_hist
+
+    t8, y8 = simulate_stability(model_nearest, K_nearest, y0_amb, T_target_8)
+    
+    fig8, (ax8a, ax8b) = plt.subplots(2, 1, figsize=(8, 10))
+    # Plot a few random voxels
+    ax8a.plot(t8, y8[:, 0], label='Corner (Target 80°C)')
+    ax8a.plot(t8, y8[:, 1], label='Neighbor (Target 40°C)')
+    ax8a.plot(t8, y8[:, 12], label='Center (Target 80°C)')
+    ax8a.set_title('Sim 8: Long-Term Stability (1 Hour)')
+    ax8a.set_ylabel('Temperature (°C)')
+    ax8a.set_xlabel('Time (s)')
+    ax8a.legend()
+    ax8a.grid(True)
+    ax8a.set_ylim(35, 85) # Zoom in to see steadiness
+    
+    # Plot Error Norm
+    T_target_flat = T_target_8.flatten()
+    T_hist = y8[:, :N]
+    error_norm = np.linalg.norm(T_hist - T_target_flat, axis=1) / np.sqrt(N) # RMS Error
+    
+    ax8b.plot(t8, error_norm, 'k-')
+    ax8b.set_title('RMS Temperature Error over 1 Hour')
+    ax8b.set_ylabel('RMS Error (°C)')
+    ax8b.set_xlabel('Time (s)')
+    ax8b.grid(True)
+    
+    fig8.tight_layout()
+    fig8.savefig('figures_writting/sim_outputs/sim8_stability.png')
+    plt.close(fig8)
+
     fig4, (ax4a, ax4b) = plt.subplots(2, 1, figsize=(8, 10))
     
     # Center & Neighbor Response

@@ -68,7 +68,9 @@ For the extended model considering global interactions, we assume the effective 
 where $k_0$ is the nearest-neighbor rate derived above. This ensures that adjacent voxels ($d_{ij}=L$) retain the same coupling strength, while remote voxels interact with reduced intensity.
 
 \subsection{Simulation 1: Single Voxel Step Response}
-The first test commands the center voxel to $100^\circ$C. Figure~\ref{fig:sim1} shows the result.
+The first test commands the center voxel (coordinates $(2,2)$) to $100^\circ$C. In this and subsequent plots, "Neighbor" refers to the adjacent voxel at $(2,3)$, and "Corner" refers to the far-field voxel at $(0,0)$.
+
+Figure~\ref{fig:sim1} shows the result.
 With the pure conduction model, the system response is relatively slow (settling time $>10$s) due to the low thermal conductivity of air. The "leakage" to neighbors is minimal because $k_{ij}$ is very small ($0.006\,\text{s}^{-1}$). The heater quickly reaches a higher temperature to drive heat into the voxel, constrained by the local coupling $\kappa_i$.
 
 \begin{figure}[H]
@@ -131,6 +133,31 @@ Figure~\ref{fig:sim5} visualizes the steady-state difference for the gradient ta
     \includegraphics[width=\textwidth]{sim_outputs/sim5_comparison_gradient.png}
     \caption{Gradient maintenance with Distance-Based coupling. Bottom Right: The difference map shows that the global coupling causes a slight "smearing" of heat from the hot left side into the cold right side compared to the local model.}
     \label{fig:sim5}
+\end{figure}
+
+\section{Limitations and Long-Term Stability}
+
+To fully characterize the controller's performance limits, we conducted two additional stress tests focusing on reachability and asymptotic stability.
+
+\subsection{Simulation 7: The Uncontrollable "Cold Trap"}
+Thermal control systems are fundamentally asymmetric: energy can be added via heaters ($u_i \ge 0$) but can only be removed via passive coupling to the environment. To visualize this limitation, we commanded the system to hold the center voxel at $20^\circ$C while heating all surrounding neighbors to $100^\circ$C.
+Figure~\ref{fig:sim7} shows the result. The control input for the center voxel (bottom panel) rails at 0W as expected. However, the temperature (top panel) uncontrollably rises to $\approx 60^\circ$C due to conductive leakage from the neighbors. This defines the "reachability gap" of the system: any target state that requires a net heat flux out of the volume greater than the passive environmental loss is physically unreachable.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{sim_outputs/sim7_impossible_trap.png}
+    \caption{Response to an unreachable target command. The center voxel cannot be maintained at $20^\circ$C against a $100^\circ$C background, resulting in a large steady-state error despite the controller commanding 0W.}
+    \label{fig:sim7}
+\end{figure}
+
+\subsection{Simulation 8: Long-Term Stability}
+Finally, we validated the numerical stability of the controller over a 1-hour horizon (3600 seconds) while maintaining a spatial stripe pattern (alternating columns of $80^\circ$C and $40^\circ$C). Figure~\ref{fig:sim8} demonstrates that the system settles into a robust steady state. The traces (Top) show no drift or oscillation. The RMS error (Bottom) converges to a much lower value ($\approx 8^\circ$C) compared to a full checkerboard pattern, as the striped configuration reduces the thermal load on the cold voxels by providing neutral neighbors along the vertical axis.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{sim_outputs/sim8_stability.png}
+    \caption{One-hour stability test with a striped target pattern. The system remains perfectly stable with low residual error.}
+    \label{fig:sim8}
 \end{figure}
 
 \end{document}

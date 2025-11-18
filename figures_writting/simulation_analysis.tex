@@ -50,6 +50,23 @@ The derived model coefficients are summarized in Table~\ref{tab:params}.
     \end{tabular}
 \end{table}
 
+\subsection{Derivation of Coupling Coefficients}
+The coupling rate $k_{ij}$ dictates the rate of heat transfer between voxel $\mathcal{V}_i$ and $\mathcal{V}_j$. It is derived from the fundamental law of thermal conduction, $q = k_{th} A \frac{\Delta T}{d}$, where $A$ is the cross-sectional area and $d$ is the distance. In our state-space formulation, $k_{ij}$ has units of $[\text{s}^{-1}]$.
+
+\subsubsection*{Nearest-Neighbor Model}
+For adjacent voxels sharing a face, the distance $d$ is the voxel side length $L$, and the area $A$ is $L^2$. The heat flow is $q = k_{th} L (T_j - T_i)$. Normalizing by the voxel heat capacity $c_i$, we obtain:
+\begin{equation}
+    k_{ij} = \frac{k_{th} L}{c_i} \quad \text{for adjacent } i,j
+\end{equation}
+Substituting our parameters ($k_{th}=0.026, L=0.06, c_i=0.26$) yields the baseline rate $k_0 \approx 0.006\,\text{s}^{-1}$.
+
+\subsubsection*{Distance-Based Model}
+For the extended model considering global interactions, we assume the effective conductance decays inversely with Euclidean distance $d_{ij}$ between voxel centers. The general coupling coefficient is:
+\begin{equation}
+    k_{ij} = k_0 \left(\frac{L}{d_{ij}}\right)
+\end{equation}
+where $k_0$ is the nearest-neighbor rate derived above. This ensures that adjacent voxels ($d_{ij}=L$) retain the same coupling strength, while remote voxels interact with reduced intensity.
+
 \subsection{Simulation 1: Single Voxel Step Response}
 The first test commands the center voxel to $100^\circ$C. Figure~\ref{fig:sim1} shows the result.
 With the pure conduction model, the system response is relatively slow (settling time $>10$s) due to the low thermal conductivity of air. The "leakage" to neighbors is minimal because $k_{ij}$ is very small ($0.006\,\text{s}^{-1}$). The heater quickly reaches a higher temperature to drive heat into the voxel, constrained by the local coupling $\kappa_i$.
@@ -80,6 +97,29 @@ The gradient test (Figure~\ref{fig:sim3}) demonstrates the high spatial resoluti
     \includegraphics[width=\textwidth]{sim_outputs/sim3_gradient.png}
     \caption{Steady-state gradient maintenance. The low conductivity of air allows for sharp thermal gradients to be maintained with minimal error on the cold side.}
     \label{fig:sim3}
+\end{figure}
+
+\section{Distance-Based Coupling}
+We extended the model to investigate the effect of long-range thermal interactions. In the standard model, heat transfer is restricted to nearest neighbors (sharing a face). Here, we introduce a global coupling term where every voxel interacts with every other voxel, utilizing the inverse-distance decay law derived in the previous section. This models a more diffuse radiative or convective heat transfer mechanism that is not strictly local.
+
+\subsection{Simulation 4: Impact of Global Coupling}
+Figure~\ref{fig:sim4} compares the step response of the Center voxel between the Nearest-Neighbor (Blue) and Distance-Based (Red) models.
+The primary effect of the $1/d$ coupling is an increase in effective thermal inertia and crosstalk. The "Distance: Neighbor" trace (red dotted line) rises higher than the nearest-neighbor case, indicating that heat is "leaking" more efficiently to the surrounding volume. This diffusive effect requires the controller to apply slightly different power profiles to maintain the target, resulting in a marginally slower settling time for the target voxel as energy is wicked away to the far field more effectively.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{sim_outputs/sim4_comparison_step.png}
+    \caption{Comparison of step response for Nearest-Neighbor vs. Distance-Based coupling. The distance-based model (Red) shows increased thermal leakage to neighbors.}
+    \label{fig:sim4}
+\end{figure}
+
+Figure~\ref{fig:sim5} visualizes the steady-state difference for the gradient task. The "Diff" map (Bottom Right) reveals that the Distance-based model results in a smoother temperature field. The sharp gradient boundary is slightly more blurred, as heat from the hot zone (left) radiates directly to the cold zone (right) without needing to diffuse hop-by-hop through intermediate voxels. However, the LQR controller is robust enough to suppress these disturbances, keeping the absolute error magnitudes comparable to the local model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sim_outputs/sim5_comparison_gradient.png}
+    \caption{Gradient maintenance with Distance-Based coupling. Bottom Right: The difference map shows that the global coupling causes a slight "smearing" of heat from the hot left side into the cold right side compared to the local model.}
+    \label{fig:sim5}
 \end{figure}
 
 \end{document}

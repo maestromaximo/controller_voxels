@@ -1,0 +1,564 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{dsfont}
+\usepackage{euscript}
+
+\usepackage{hyperref}
+
+\usepackage{changepage}
+\usepackage[left=1in,right=1in]{geometry}
+
+\usepackage{todonotes}
+\nocite{*}
+
+\newcommand{\vy}{\vec{y}}
+\newcommand{\vu}{\vec{u}}
+\newcommand{\vut}{\vu(t)}
+\newcommand{\vys}{\vec{y}^{\,*}} % y star vector
+\newcommand{\mz}{\mathbf{0}}
+\newcommand{\norm}[1]{\left\vert\!\left\vert#1\right\vert\!\right\vert}
+
+\begin{document}
+
+\begin{abstract} % To guide us in writing. We will likely rewrite this, or at least heavily modify it, after writing the rest.
+    The problem of controlling temperature of a general volume via local resistive heating is considered in the lens of optimal control theory; namely, the concepts of the linear quadratic regulator and finite-horizon model predictive controller are discussed. A simple linear physical model is developed, prototypical geometries are examined, and practical limitations and requirements are considered under the framework of variational calculus. Finally, numerical simulations of system evolution and control are presented.
+\end{abstract}
+
+
+\section{Introduction}
+The problem of controlling sample environments in physical experiments in a cost-effective, robust, and flexible manner is one of great interest in general. For example, neutron interferometers are extremely sensitive to temperature gradients across the length of the setup, harshly limiting the sensitivity of these instruments~\cite{saggu2016decoupling}. Further, experiments and instruments requiring this control often generate heat, vibrations, or other undesired environmental couplings. Given the relative availability and cost-effectiveness of precise temperature sensors, resistive heating, and modern computation power, the problem of volumetric temperature control is straightforwardly approached, yet literature and commerce lack solutions.
+...
+% Discussion on current temperature control methods and why they suck in comparison - cost, size, characteristics.
+
+% Discussion on requirements for a successful system: noise rejection, stability, simplicity in use, flexibility in setup geometry/heat sources.
+
+% Brief discussion on the two types of control we'll talk about, where they're used, etc.
+
+\section{Modelling and Problem Statement}
+\label{sec:modelling}
+% LTI system!
+% Start with physical model, get some matrices A, B, C, ..., and then plug in to LQR/MPC discussion in next section.
+To control a general controlled sample environment volume $\mathcal{V}$, consider the set of volume partitions, $\{\mathcal{V}_i\}_{i=1}^N$ such that $\mathcal{V}=\bigcup_{i=1}^N{\mathcal{V}_i}$ as individual \emph{control regions}. This discretisation allows for the sample environment to be controlled to shape temperature fields at a defined resolution, with greater or fewer degrees of freedom per unit volume as desired.
+
+To implement this, temperature sensor-heater pairs (SHPs) can be placed within $\mathcal{V}$ to act as \emph{control points} throughout $\mathcal{V}$. Each SHP, indexed by $i$, defines its own control region, $\mathcal{V}_i$, and can be described with several elements of the \emph{state vector}, $\vy(t)$, each time-dependent:
+\begin{enumerate}
+    \item $T_i(t)$, the temperature reading of the sensor. This represents, to a spatial resolution defined by the spacing of the SHPs, the temperature of $\mathcal{V}_i$.
+    \item $E_i(t)$, the heat energy stored in the material composing the heater in the SHP. This represents energy yet to be released to the system, and therefore cannot be directly measured, only inferred.
+    \item $\mathcal{T}_i(t)$, the target value for $T_i(t\rightarrow\infty)$. The control system will track this value, which may vary in time in a prescribed fashion.
+\end{enumerate}
+Every control region also has an associated heat capacity $c_i$ defining the rise in $T_i$ associated with an addition of heat energy to $\mathcal{V}_i$; every heater similarly has an associated heat capacity $c_i^*$, representing the rise in temperature of the heater body associated with a rise in $E_i$.
+
+The physical model that will drive analysis follows a simplified heat transfer model, approximating the potentially complex fluid dynamics or material properties with a linear differential equation, in the spirit of those such as Newton and Fourier. Namely, this model is built upon a modified version of Newton's law of cooling, including multiple sources/sinks via superposition of linear differential equations:
+\begin{align*}
+    \dot{T}_i &= \sum_{j\neq i}^N\left(-k_{ij} (T_i - T_j)\right) + \sum_{j}^N \left(-\kappa_{ij} (T_i - \frac{1}{c_j^*}E_j)\right)
+\end{align*}\todo[inline]{comment on symmetry/lack thereof in $k_{ij}$?}
+Further, the transfer coefficients will be assumed to be time- and temperature-independent. This assumption is valid under the condition that the flow of fluid in $\mathcal{V}$ is steady and the range of temperatures is not extreme. These details are out of the scope of this work, and will not be discussed further. The first term describes the heat flow from advection, diffusion, \emph{etcetera} between $\mathcal{V}_i$ to $\mathcal{V}_j$ or vice versa, and the second term describes the heating effect on $\mathcal{V}_i$ from heater $j$. Assuming radiative heating is negligible, all but one of the summands in the second term can be neglected:
+\begin{align}
+    \dot{T}_i &\approx \sum_{j\neq i}^N\left(-k_{ij} \left(T_i - T_j\right)\right)  -\kappa_{i} \left(T_i - \frac{1}{c_i^*}E_i\right) - k_{i}^e(T_i - T_{i}^e)\label{eqn:coolinglaw} 
+\end{align}
+\todo[inline]{fix LQR section with environmental bits}
+where $\kappa_i\equiv\kappa_{ii}$ is defined for convenience, and $T_i^e$ denotes the effective temperature associated with environmental heat loss or gain. Conservation of energy, then yields the following:
+\begin{align*}
+    \dot{E}_i &= -\kappa_i (E_i - c_i^*T_i)
+\end{align*}
+and for input power $u_i$ to heater $E_i$,
+\begin{align}
+    \dot{E}_i &= -\kappa_i (E_i - c_i^*T_i) + u_i\label{eqn:heatinglaw}.
+\end{align}
+Thus, the optimisation problem can be stated as the following, for some time horizon $\tau$:
+\begin{adjustwidth}{-0.5in}{0pt}
+\begin{align}
+  \text{Find control sequence}\quad &\vut = \arg\min_{\vec{u'}(t)\in\Omega} J(\vec{u'}(t)),\label{eqn:minprob}\\[4pt]
+  J(\vut) &= \int_{0}^{\tau} \Big( (\vy(t,\vut)-\vys(t))^\text{T} \mathbf{Q}\, (\vy(t,\vut)-\vys(t))\Big)\,dt,\label{eqn:costfunc}\\[6pt]
+  \text{subject to}\quad &\dot{\vy}(t) = \mathbf{A}\,\vy(t) + \mathbf{B}\,\vut + \mathbf{E},\label{eqn:evolutionlaw}\\[4pt]
+  \text{and}\quad& \Omega \equiv [0, p_i]^N\label{eqn:inputconstraints},
+\end{align}
+\end{adjustwidth}
+
+Given state vector $\vy(t)=(\ T_1 \ T_2 \ \cdots \ T_N \ E_1 \ E_2 \ \cdots \ E_N \ )^T$ and target state vector $\vys(t)=(\ \mathcal{T}_1 \ \mathcal{T}_2 \ \cdots \ \mathcal{T}_N \ 0 \ 0 \ \cdots \ 0)^T$, state evolution matrix $\mathbf{A}$ as defined by the time derivative of each state vector element (see Appendix, S.~\ref{appendix:ABform}), input matrix $\mathbf{B}$ constructed such that $\frac{\partial E_i}{\partial u_j}=\delta_{ij}$ with $\delta_{ij}$ the Kronecker delta (i.e., the control variable dictates the power output of a heater, with maximum $p_i$), and environmental loss term $\mathbf{E}$. Further, the cost function is defined
+\begin{align}
+    \mathbf{Q}=
+    \begin{bmatrix}
+        \mathds{1} & \mz \\
+        \mz & \mz
+    \end{bmatrix}
+\end{align}
+such that the cost is strictly the sum of square errors between the actual temperatures and their corresponding setpoints. It should be noted here that the latter half of the target state vector $\vys(t)$ does not contribute to the cost.
+\todo[inline]{Pretty picture}
+
+\section{Optimal Control Theory}
+\label{sec:optimal_control}
+
+In this section we reformulate the volumetric temperature control problem of Section~\ref{sec:modelling} as an infinite–horizon optimal control problem and derive a linear quadratic regulator (LQR) for tracking a target temperature field. The constraints of the problem will be softened and an additional cost term is introduced to the end of computational tractability.
+
+\subsection{Error-state formulation and problem statement}
+
+For every subvolume $\mathcal{V}_i$ we define steady subvolume temperature $T^*_i$, heater energy $E_i^*$, and input
+$u_i^*$ as the values that keep $\dot\vy(t, \vec{u}^{\,*}(t))=0$ under the
+assumed (linear) system model~\eqref{eqn:evolutionlaw}. Solving the linear system,
+\begin{align}
+0
+&= \sum_{j\neq i} -k_{ij}(T_i^*-T_j^*)
+   -\kappa_i\!\left(T_i^*-\frac{1}{c_i^*}E_i^*\right)
+   -k_i^e(T_i^* - T_i^e),
+\label{eq:ss_T}\\[2pt]
+0
+&= -\kappa_i(E_i^*-c_i^* T_i^*)+u_i^*,
+\label{eq:ss_E}
+\end{align}
+so that
+\begin{align}
+E_i^* &= c_i^*\!\left(
+    T_i^* + \frac{1}{\kappa_i}\left(\sum_{j\neq i} k_{ij}(T_i^*-T_j^*)
+ + k_i^e(T_i^* - T_i^e)\right)\right),
+\label{eq:ss_Ei_star}\\[4pt]
+u_i^* &= c_i^* \left(\sum_{j\neq i} k_{ij}(T_i^*-T_j^*) +  k_i^e(T_i^* - T_i^e)\right),
+\label{eq:ss_ui_star}
+\end{align}
+\todo[inline]{fixed environment term up to here}
+for $i=1,\dots,N$. These depend only on the steady temperature field, $\{T_i^*\}$, and the physical couplings. Hence, we can set $T_i^*=\mathcal{T}_i$ to determine the steady state and inputs for a desired (steady) temperature field.
+
+We now introduce the \emph{state error coordinates}
+\begin{align}
+\delta T_i &\equiv T_i - T_i^*, &
+\delta E_i &\equiv E_i - E_i^*, &
+\delta u_i &\equiv u_i - u_i^* .
+\end{align}
+$\{\delta T_i\}$ and $\{\delta E_i\}$ can be combined to form the \emph{error state}, and $\{\delta u_i\}$ can be expressed in a column vector,
+\begin{equation}
+\label{eq:error_state_def}
+\delta{\vy}(t)
+=
+\begin{bmatrix}
+\delta\mathbf{T}(t)\\[2pt]
+\delta\mathbf{E}(t)
+\end{bmatrix}
+=
+\begin{bmatrix}
+\delta T_1(t)\\[-1pt]\vdots\\\delta T_N(t)\\[1pt]
+\delta E_1(t)\\[-1pt]\vdots\\\delta E_N(t)
+\end{bmatrix}
+\in\mathbb{R}^{2N},
+\qquad
+\delta\vu(t)
+=
+\begin{bmatrix}
+\delta u_1(t)\\[-1pt]\vdots\\\delta u_N(t)
+\end{bmatrix}\in\mathbb{R}^N .
+\end{equation}
+Substituting $T_i=T_i^*+\delta T_i$, $E_i=E_i^*+\delta E_i$ and
+$u_i=u_i^*+\delta u_i$ into~\eqref{eqn:coolinglaw}--\eqref{eqn:heatinglaw}
+and using the steady–state conditions~\eqref{eq:ss_T}--\eqref{eq:ss_ui_star},
+the constant terms cancel and we obtain the homogeneous deviation dynamics
+\begin{align}
+\delta\dot{T}_i &=
+  -\sum_{j\neq i} k_{ij}(\delta T_i-\delta T_j)
+  -\kappa_i\,\delta T_i
+  +\frac{\kappa_i}{c_i^*}\,\delta E_i, \label{eq:deltaT_dyn}\\[2pt]
+\delta\dot{E}_i &=
+  \kappa_i c_i^*\,\delta T_i
+  -\kappa_i\,\delta E_i
+  +\delta u_i, \label{eq:deltaE_dyn}
+\end{align}
+for $i=1,\dots,N$.
+
+Equations~\eqref{eq:deltaT_dyn}--\eqref{eq:deltaE_dyn} can be written compactly
+as a linear time–invariant (LTI) system
+\begin{equation}
+\label{eq:error_state_LTI}
+\dot{\delta{\vy}}(t)
+=
+\mathbf{A}\,\delta{\vy}(t)
++
+\mathbf{B}\,\delta\vu(t),
+\end{equation}
+\iffalse
+with block structure
+\begin{equation}
+\mathbf{A} =
+\begin{bmatrix}
+\mathbf{A}_{TT} & \mathbf{A}_{TE}\\[2pt]
+\mathbf{A}_{ET} & \mathbf{A}_{EE}
+\end{bmatrix}\!,\qquad
+\mathbf{B} =
+\begin{bmatrix}
+\mathbf{B}_T\\[2pt]
+\mathbf{B}_E
+\end{bmatrix}
+=
+\begin{bmatrix}
+\mathbf{0}_{N\times N}\\[2pt]
+\mathds{1}_N
+\end{bmatrix},
+\end{equation}
+where the entries of the blocks are
+\begin{align}
+(\mathbf{A}_{TT})_{ij}
+&=
+\begin{cases}
+-\displaystyle\sum_{j'\neq i} k_{ij'} - \kappa_i, & i=j,\\[6pt]
+k_{ij}, & i\neq j,
+\end{cases}
+\label{eq:ATT_entries}\\[4pt]
+\mathbf{A}_{TE} &= \mathrm{diag}\!\big(\kappa_i / c_i^*\big),\\[4pt]
+\mathbf{A}_{ET} &= \mathrm{diag}\!\big(\kappa_i c_i^*\big),\\[4pt]
+\mathbf{A}_{EE} &= -\,\mathrm{diag}\!\big(\kappa_i\big).
+\end{align}\fi
+Thus, in error coordinates the environmental loss term appears only through the constant
+offsets $T_i^*$ and the derived steady quantities
+$E_i^*,u_i^*$, and the dynamics are purely linear in
+$\tilde{\vy}$ and $\delta\vu$.
+
+The original input box constraints $0\le u_i\le p_i$ translate to
+\begin{equation}
+\label{eq:delta_u_constraints}
+-u_i^* \;\le\; \delta u_i(t) \;\le\; p_i - u_i^*,
+\qquad i=1,\dots,N.
+\end{equation}
+Classical LQR theory is developed for unconstrained inputs, so in what follows
+we design a linear feedback law ignoring~\eqref{eq:delta_u_constraints} and
+later enforce~\eqref{eq:delta_u_constraints} by saturating the command
+$u_i(t)=u_i^*+\delta u_i(t)$ in simulation. \todo[inline]{havent done sims yet , yup}
+
+\subsection{Quadratic cost and LQR formulation}
+
+The aim is to regulate the system so that $\delta\mathbf{T}(t)\to 0$ and
+$\delta\mathbf{E}(t)\to 0$ while using as little extra heater power as
+practically reasonable.  This trade--off is captured by a quadratic performance
+index of the form
+\begin{equation}
+\label{eq:LQR_cost}
+J(\delta\vu)
+=
+\int_0^\infty
+\Big(
+\tilde{\vy}(t)^\top \mathbf{Q}\,\tilde{\vy}(t)
++
+\delta\vu(t)^\top \mathbf{R}\,\delta\vu(t)
+\Big)\,dt,
+\end{equation}
+with symmetric weighting matrices $\mathbf{Q}\succeq 0$ and
+$\mathbf{R}\succ 0$.  Following the discussion above, we choose
+$\mathbf{Q}$ block–diagonal in temperature and heater–energy channels:
+\begin{equation}
+\label{eq:Q_structure}
+\mathbf{Q}
+=
+\begin{bmatrix}
+\mathbf{Q}_T & \mathbf{0}\\[2pt]
+\mathbf{0}   & q_E\,\mathds{1}_N
+\end{bmatrix},
+\end{equation}
+where $\mathbf{Q}_T=\mathrm{diag}(w_1,\dots,w_N)\succeq 0$ weights temperature
+errors in each region, and $q_E\ge 0$ is a scalar penalizing heater–energy
+deviations.  For the numerical examples in this work we take
+$\mathbf{Q}_T=\mathds{1}_N$ and $q_E$ small (e.g.\ $q_E\in[10^{-2},10^{-1}]$),
+so that the dominant contribution to~\eqref{eq:LQR_cost} is the sum of squared
+temperature errors.
+
+The control weighting is chosen as an “almost–free actuation’’ term
+\begin{equation}
+\label{eq:R_choice}
+\mathbf{R}
+=
+\varepsilon\,\mathds{1}_N,
+\qquad
+\varepsilon>0\ \text{small}.
+\end{equation}
+The parameter $\varepsilon$ regularizes the problem and guarantees that
+$\mathbf{R}\succ 0$, while its smallness allows the controller to use relatively
+aggressive heater commands when necessary.
+
+The infinite–horizon LQR problem is therefore
+\begin{equation}
+\label{eq:LQR_problem}
+\begin{aligned}
+\text{minimize}\quad
+&J(\delta\vu) \ \text{as in~\eqref{eq:LQR_cost}},\\
+\text{subject to}\quad
+&\dot{\tilde{\vy}}(t)=\mathbf{A}\,\tilde{\vy}(t)+\mathbf{B}\,\delta\vu(t),\\
+&\tilde{\vy}(0)=\tilde{\vy}_0.
+\end{aligned}
+\end{equation}
+
+\subsection{Solution via the continuous--time algebraic Riccati equation}
+
+For the continuous--time LTI system~\eqref{eq:error_state_LTI} with cost
+weights~\eqref{eq:Q_structure}--\eqref{eq:R_choice}, the optimal feedback law is
+obtained by solving the \emph{continuous--time algebraic Riccati equation}
+(CARE)
+\begin{equation}
+\label{eq:CARE}
+\mathbf{A}^\top\mathbf{P}
++
+\mathbf{P}\mathbf{A}
+-
+\mathbf{P}\mathbf{B}\mathbf{R}^{-1}\mathbf{B}^\top\mathbf{P}
++
+\mathbf{Q}
+= \mathbf{0},
+\qquad
+\mathbf{P}=\mathbf{P}^\top\succeq 0.
+\end{equation}
+Under typical assumptions; in particular, stabilizability of the pair
+$(\mathbf{A},\mathbf{B})$ and detectability of $(\mathbf{Q}^{1/2},\mathbf{A})$,
+which hold for the thermal network considered here when $\kappa_i>0$ and the
+graph induced by the couplings $k_{ij}$ is connected, the CARE admits a unique
+stabilizing solution $\mathbf{P}\succeq 0$~\cite{Liberzon2011}.  In practice and for our work,
+$\mathbf{P}$ is computed numerically using a standard CARE solver.
+
+Given $\mathbf{P}$, the optimal LQR feedback gain is
+\begin{equation}
+\label{eq:K_def}
+\mathbf{K}
+=
+\mathbf{R}^{-1}\mathbf{B}^\top\mathbf{P}\in\mathbb{R}^{N\times 2N},
+\end{equation}
+and the optimal deviation input is the linear state feedback
+\begin{equation}
+\label{eq:delta_u_feedback}
+\delta\vu(t) = -\,\mathbf{K}\,\tilde{\vy}(t).
+\end{equation}
+Mapping back to physical inputs, the command applied to heater $i$ is
+\begin{equation}
+u_i(t)
+=
+u_i^*
+-
+\Big(\mathbf{K}\,\tilde{\vy}(t)\Big)_i,
+\qquad i=1,\dots,N,
+\end{equation}
+where $u_i^*$ is the steady value given by~\eqref{eq:ss_ui_star}.  The
+resulting closed--loop error dynamics are
+\begin{equation}
+\dot{\tilde{\vy}}(t)
+=
+(\mathbf{A}-\mathbf{B}\mathbf{K})\,\tilde{\vy}(t)
+=: \mathbf{A}_c\,\tilde{\vy}(t).
+\end{equation}
+By construction of $\mathbf{K}$ via the stabilizing solution $\mathbf{P}$ of
+the CARE, all eigenvalues of $\mathbf{A}_c$ lie in the open real line, so
+$\tilde{\vy}(t)\to 0$ as $t\to\infty$ for any initial condition
+$\tilde{\vy}_0$.  In physical terms, this means that the temperatures converge
+to the prescribed target field $\mathbf{T}^*$ and the heaters relax to the
+steady energy levels $E_i^*$ while minimizing the quadratic cost
+$J(\delta\vu)$.
+
+\subsubsection*{Summary}
+
+Starting from the physical model~\eqref{eqn:coolinglaw}--\eqref{eqn:heatinglaw},
+we have (i) constructed an LTI model for temperature and heater–energy
+deviations about an arbitrary admissible target field, (ii) posed an
+infinite–horizon quadratic optimal control problem for these deviations, and
+(iii) obtained an implementable LQR feedback law
+$u(t)=u^*-\mathbf{K}\tilde{\vy}(t)$ by solving the CARE numerically.  This
+serves as the baseline controller against which the constrained model
+predictive control designs of the following sections are compared.
+
+
+\subsection{Model Predictive Control}
+% In the context of altering the LQR, introduce the main ideas behind MPC.
+% Emphasis on finite-horizon control
+LQR controllers are ubiquitous, though a more general approach is required to see improvements in aspects of stability\todo[inline]{i mean an avoidance of transit between oscillatory states and non-oscillatory states (R problem). There's probably a better way to state this}, settle speed, tuning ambiguities, obedience of constraints, and self-correction in the presence of non-linear behaviour. Given the original problem statement, the solution to the LQR required the constraints to be reformulated into a softer form, with immediate and direct consequences on its qualitative performance. The model predictive control (MPC) technique is better-suited to this problem, handling constraints directly and recalculating the (potentially nonlinear) control law at every timestep for optimisation over a finite horizon. \todo[inline]{check: Further, the resulting control law is generally piecewise linear for linear models.} The key idea of MPC is that it, with a prediction of the system's response to a constant variation on the inputs, optimises a cost with some finite time horizon. Reframing the original problem statement such that the cost function only depends on the final state (${J=(\vy(H, \vu^*) - \vys(H))^\text{T}\mathbf{Q}(\vy(H, \vu^*) - \vys(H)}$ for some finite horizon $H$), we can guarantee that an optimal controller reaches the desired state (or as close to it as allowed) within a finite time. Due to the repeating action, the quantity $\Tilde{J}=\sum_t\sum_i(\vy(H+t, \vu^*) - \vys(H))^\text{T}\mathbf{Q}(\vy(H+t, \vu^*) - \vys(H)$, effectively the discretised version of~\ref{eqn:costfunc}, is minimised.
+
+For the generalised problem statement consisting of a cost function dependent on the state vector, inputs, rates of change of either, and constraints thereon, the MPC is typically not analytically solvable. Instead, iterative approaches are used; a rich portion of the existing literature is focussed on convergence, existence and uniqueness of solutions, and stability. 
+
+In the case, however, of an optimal control problem with a cost of the squared errors between a target state and the state at some time $\tau$ in the future at every timestep, under constraints on controlled variables only, there does exist an analytical solution. We will use this to build the solution to our discretised problem:
+
+\begin{align}
+  \text{Find control sequence}\quad &\vu[t] = \arg\min_{\vec{u'}[t]\in\Omega} J(\vec{u'}[t]),\\[4pt]
+  J(\vu[t]) &= \sum_{n=1}^{H} \Big( (\vy(n\Delta t)-\vys)^\text{T} \mathbf{Q}\, (\vy(n\Delta t)-\vys)\Big)\,,\\[6pt]
+  \text{subject to}\quad &\dot{\vy}(t) = \mathbf{A}\,\vy(t) + \mathbf{B}\,\vut + \mathbf{E},\\[4pt]
+  \text{and}\quad& \Omega \equiv [0, p_i]^N,
+\end{align}
+with $\Delta \vec{u}[\tau]=\vec{u}[\tau+1]-\vec{u}[\tau]$ defining discrete changes in $\vu(t)$ taking place at time $\tau$.
+
+Being somewhat out of scope and primarily results of linear programming, we will use the results of Ref.~\cite{gupta1997analytical} without proof: For step response matrix $\mathbf{S}$, diagonal cost matrix $\mathbf{Q}$, the optimal control move at current time $t$ is
+\begin{align}
+    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}(\vec{e} + \vec{e}_C)
+\end{align}
+constrained to $\Delta \vu \in [-\vu, \vec{p}-\vu]$ at every timestep, where
+\begin{align}
+    \vec{e}_C&=\mathbf{Q} (\vys - \vy_\text{traj}[t+H])
+\end{align}
+is the predicted error at the horizon, and $\vy_\text{traj}[t+H]$ is the predicted state arising at the time horizon, arising from only previous control moves: (see Appendix~\ref{appendix:trajectories}, eqn.~\ref{eqn:trajectoryprediction})
+\begin{align}
+    \vy_\text{traj}[t+H]=\mathbf{A}^{-1}\mathbf{\Phi}(H) 
+        \left( \sum_{n=1}^{t/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vec{u}[n]\right) + 
+            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
+        \right)
+        +
+        \mathbf{\Phi}(H)\vec{y}(t)
+\end{align}
+This provides an optimal controller to calculate a control move $\Delta \vu$ at every timestep.\todo[inline]{Discussion on the choice of horizon - the system will always settle back to ``room temperature'', so to speak, so cost at horizon might be completely constant depending on choice... Build up a sum of these?}
+\todo[inline]{We have several options. See below:}
+\begin{itemize}
+    %\item A sum of costs at every timestep (very true to our original cost functional)
+    %\item A sum of costs at some average time constant for our system (has the drawback of performing badly for very slow responses, but very quick ones will settle at their newly perturbed temperature quickly (since we're dealing in $\Delta \vu$) and they'll be minimised well.
+    %\item ...
+    %\item Maybe this cost function actually works well, since we're working with $\Delta \vu$
+    %\item Higher horizons will essentially ignore noise more, though, since any artificial perturbations will settle.
+    \item Final conclusion: Set horizon to somewhere like our ``average'' time constant, as well as maximum. Compare numerically. Include a discussion on how the cost function should be somewhat ``close'' in some sense to the original one, or perhaps even more harsh.
+    \item Additionally, it can't hurt to see how modifying $e_C$ to include earlier-than-horizon cost can change the control behaviour. Analysis is still to be done.
+\end{itemize}
+
+
+\section{Alejandro,}
+\begin{itemize}
+    \item Please simulate MPC response with several different solutions: one with horizon of some average $\tau$ and one with horizon of $\max(\tau)$
+    \item Also another one with $e_C=\mathbf{Q}\left(\vys - \sum_m^M \vy_\text{traj}[t + n\Delta t] f[n]\right)$ for several different $M$, and $f[m]=1/M$, $f[m]=(e^{(m-M)})/\sum_i^M e^{(i-M)}$ (i.e., just some \emph{normalised} weight functions)
+\end{itemize}
+
+
+%https://cse.lab.imtlucca.it/~bemporad/publications/papers/encyclopedia_explicit_MPC_v2.pdf
+% Stability discussion: https://doi.org/10.1016/S0098-1354(98)00301-9
+% Excellent example of a non-standard (kind of) R matrix: https://doi.org/10.3390/electronics8101077
+
+\subsubsection{Summary}
+% Same as LQR. In this section, though, emphasis on computational ease, etc. since MPC is supposed to be more practical, whereas LQR is supposed to be analytically optimal.
+
+\subsection{Noise Rejection}
+% This is a big topic, deserves its own section - if either of you think of a better way to fit this in (since we'll discuss for both LQR and MPC), pitch it -DG
+% Noise Rejection Characteristics of both LQR and MPC - discuss which is better for what, under a couple cost functions.
+% Not sure whether we model noise here as an addition or if we should start with noise in the original model.
+% Come to think of it, this is honestly probably the most "extension-to-the-course-content" part of our project, with convexity arguments. 
+
+\section{Applications}
+% Here's where we can introduce the 2D box model, cube, etc., as well as some B-E-A-utiful figures/GIFs.
+% Convexity arguments for some prototypical models can be put here, discuss infeasible control briefly, etc. Be very careful to choose easily analysed geometries for this, since the arguments can get extremely difficult/too high-level to be useful.
+% Basic models for the temperature conductivity coefficients can be approximated as proportional to inverse distance squared etc. from advection ideas. (find a reference for this, it might not be 1/r^2 but I'm pretty sure it is - DG)
+% Discuss some different cost functions: gradient control, absolute temperature control, optimal noise rejection
+
+\section{Computational Considerations, Simulations, and Numerics}
+% Do the fun stuff!
+% Talk about optimisations - i.e., going as far as one can analytically for a particular geometry, approximations, etc.
+
+\section{Further Extensions}
+% Beyond the scope of this paper! Talk about higher-order/non-linear corrections to the model: in the end, temperature change is far more complicated than a linear model with constant coefficients. Should really get fluid mechanics in here, but that's potentially an unsolvable problem... There are corrections which *can* be made, but out of scope.
+% BRIEFLY mention possible extensions.
+% Model identification should be briefly mentioned. I can deal with this  -DG
+
+\newpage
+\section{Appendix}
+% Here we can put some real data if we're feeling cheeky
+% "As one can see from Fig. X and Y, our model works extremely effectively"
+\subsection{Construction of \texorpdfstring{$\mathbf{A}$, $\mathbf{B}$, and $\mathbf{E}$}{A, B, and E}}\label{appendix:ABform}
+$\mathbf{A}$ can be constructed from the physical laws \ref{eqn:coolinglaw} and \ref{eqn:heatinglaw}, with block form
+\begin{align*}
+    \mathbf{A}&=\begin{bmatrix}
+        \mathbf{\Lambda}+\mathbf{\Lambda'} & \mathbf{\Psi} \\ % heat transfer between states, heat transfer from E_i -> V_i
+        \mathbf{\Phi} & \mathbf{\Delta} \\ % heat transfer from V_i->E_i, heat transfer from energies in heaters
+    \end{bmatrix}
+\end{align*}
+with $\mathbf{\Lambda}', \mathbf{\Psi}, \mathbf{\Phi},$ and $\mathbf{\Delta}$ all diagonal.
+Each of these blocks can be described as follows:
+\begin{enumerate}
+    \item heat transfer from $\mathcal{V}_j$ to $\mathcal{V}_i$, $\Lambda_{ij}=k_{ij}$ (dimensionless), 
+    \item heat transfer from $E_i$ to $\mathcal{V}_i$, $\Psi_{ii}\approx\frac{\kappa_i}{c^*_i}$ (dimensions of inverse heat capacity),
+    \item heat transfer from $\mathcal{V}_i$ to heater mass $E_i$, $\Phi_{ii}\approx\kappa_i c^*_i$ (dimensions of heat capacity),
+    \item heat loss from $\mathcal{V}_i$ to other subvolumes, the heater mass, and environment, $\Lambda'_{ii}=-\kappa_i- - k_i^e-\sum_{j\neq i} k_{ij}$ (dimensionless), and
+    \item heat loss from $E_i$ to its subvolume $\mathcal{V}_i$, $\Delta_{ii}\approx -\kappa_i$ (dimensionless)
+\end{enumerate}% heat transfer from subvolume j to subvolume i
+Further, the $\mathbf{B}$ matrix is diagonal, and describes the heat energy added to a heater indexed by $i$ per unit time, i.e., the input power is passed through to the state elements corresponding to $E_i$: 
+\begin{align*}
+    \mathbf{B}=\begin{bmatrix}
+                \mathbf{0}\\
+                \mathds{1}
+            \end{bmatrix}
+\end{align*}
+$\mathbf{E}$ is simply a vector, $\mathbf{E}=(\ k_1^e T_1^e \ \ k_2^e T_2^e \ \ \cdots \ \ k_N^e T_N^e \ )^\text{T}$.
+
+
+
+\section{Derivation of Trajectory and Step Response}\label{appendix:trajectories}
+
+The system evolves according to the linear, piecewise-constant coefficient, non-homogeneous equation~\ref{eqn:evolutionlaw}. The homogeneous solution for $\dot\vec{y}=\mathbf{A} \vec{y}$ is trivially $\vec{y}_H(t)=\mathbf{\Phi}(t)\vec{y}_0$ with $\mathbf{\Phi}(t)=e^{\mathbf{A} t}$, and we will assume a particular solution of form $\vec{y}_P(t)=\mathbf{\Phi}(t) \vec{v}(t)$. Plugging this into the original evolution law, and breaking the integral involving $\vec{u}(t)$ into domains where $\vec{u}$ remains constant, yields a formula:
+\begin{align*}
+    \vec{v}(t)&=\mathbf{\Phi}(t)\int_0^t \mathbf{\Phi}^{-1}(t') (\mathbf{B} \vec{u}(t) + \mathbf{E}) dt\\
+    &=(\cdots)\\
+    &=\mathbf{A}^{-1} 
+        \left( \sum_{n=1}^{t/\Delta t}\left(\Big( 
+            \mathbf{\Phi}\left(t - (n-1)\Delta t\right) - 
+            \mathbf{\Phi}\left(t - n \Delta t\right)
+            \Big) \mathbf{B} \vec{u}[n]\right) + 
+            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
+        \right)
+\end{align*}
+Which could possibly have been intuited, and can easily be interpreted as exponentially-decaying weightings on past inputs with an additional perturbation from $\mathbf{E}$. To satisfy the initial condition $\vec{y}_0$, the full solution is then
+\begin{align}
+    \vec{y}(t)&=\mathbf{A}^{-1} 
+        \left( \sum_{n=1}^{t/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vec{u}[n]\right) + 
+            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
+        \right)
+        +
+        \mathbf{\Phi}(t)\vec{y}_0\label{eqn:trajectoryprediction}
+\end{align}
+defining $\Delta\mathbf{\Phi}[n]=\Big( 
+            \mathbf{\Phi}\left(t - (n-1)\Delta t\right) - 
+            \mathbf{\Phi}\left(t - n \Delta t\right)
+            \Big)$. 
+Is is notable that $\mathbf{A}^{-1}$ is known to exist in our case, since the underlying physical system is assumed to be valid, and thus the rank of the matrix is exactly equal to its dimension.
+
+Further, we can now derive the step response of the system; for input $\vu$ from time $t=0$ to $t=H$, with no previous inputs, the state will evolve as:
+\begin{align}
+    \vy_\text{step}(H) &= \mathbf{A}^{-1} 
+        \left( \sum_{n=1}^{H/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vu\right) + 
+            \Big(\mathbf{\Phi}(H)-\mathds{1}\Big)\mathbf{E} 
+        \right)
+        +
+        \mathbf{\Phi}(H)\vec{y}_0\nonumber
+        \\
+        &=\mathbf{A}^{-1} 
+        \left( \sum_{n=1}^{H/\Delta t}\left(\Delta \mathbf{\Phi}[n] \right)\mathbf{B} \vu + 
+            \Big(\mathbf{\Phi}(H)-\mathds{1}\Big)\mathbf{E} 
+        \right)
+        +
+        \mathbf{\Phi}(H)\vec{y}_0\nonumber \\
+        &=\mathbf{A}^{-1} 
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \vu + \mathbf{E} \right)
+        +
+        \mathbf{\Phi}(H)\vec{y}_0\label{eqn:stepresponse}
+\end{align}
+This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ at time $t=0$.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+
+\end{document}
+
+% Friday Nov 7 meeting NG,AG,DG
+% Responsibilities:
+    % Davis: Leading model introduction, problem formulation
+    % Nathan and Alejandro: Jointly leading LQR formulation (review from class) and applications - different cost functions, convexity arguments for prototype models, stability/convexity/feasibility of solutions
+    % Davis: Leading MPC development and applications as an real-life extension of the LQR
+    % Alejandro: Leading most numerics, with help from Davis as required for modelling
+% For applications/characterisations, we have two categories:
+    % Geometries: rectangle, cube
+    % Cost functions: gradient and absolute temperature controls, speed and stability of control, noise rejection
+% Timeline:
+% Nov. 7: Today
+% Nov. 11: DG finishes model & physical setup, optimisation problem statement
+% Nov. 13: Meeting with DG, NG, AG
+% Nov. 14: 
+    % DG finished model and setup, introduction.  
+    % DG learned MPCs ``well''
+    % AG,NG finished writing LQR theory, DG review
+    % DG finished writing extensions section
+    % DG started on writing MPCs formally
+% Nov 18 (Tues.): MPC theory is complete
+% Nov. 19-20: AG completes numerical simulations, DG completes convexity arguments
+% Nov. 20-21: Wrap up other applications
+% Nov. 24: Finished writing
+% Nov. 24-Dec. 1: Quality checks, AG,NG learn and check over MPC work.
+% Nov. 28-Dec. 1: Last edits and due dates
+
+% Nov 13 Meeting NG,AG:
+% Everyone's up to date on info, MPC is being written gradually.
+% Tuning was discussed - Bryson's rule might be an interesting topic for discussion of LQR
+% NG had an idea for applications: Point control - hot is a good physical problem, cold could be a good discussion for feasibility, great problem for talking about tuning and error tolerance
+    % All states will be reachable since LQR can give negative inputs.
+% Timeline:
+    % DG: Until Tuesday, MPC theory will be written
+    % AG: Error from tuning with Bryson's rule, simulations for all of this analysis
+    % NG: will develop cubic mesh model for k_ij, and some analysis on disturbance rejection, rise time

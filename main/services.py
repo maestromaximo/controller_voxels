@@ -63,6 +63,7 @@ def run_simulation_service(run_id):
     # Storage
     y_hist = np.zeros((steps, 2*N))
     u_hist = np.zeros((steps, N))
+    u_hist_unsat = np.zeros((steps, N))
     
     # 5. Run Loop
     for i in range(steps):
@@ -74,6 +75,7 @@ def run_simulation_service(run_id):
         
         y_hist[i] = y_current
         u_hist[i] = u_applied
+        u_hist_unsat[i] = u_unsat
         
         dy = model.sys.A @ y_current + model.sys.B @ u_applied + model.sys.E
         y_current += dy * dt
@@ -103,7 +105,7 @@ def run_simulation_service(run_id):
     fig1.savefig(path1)
     plt.close(fig1)
     
-    # Plot 2: Input Power
+    # Plot 2: Input Power (Applied / Saturated)
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     ax2.plot(time, u_hist[:, center_idx], label='Center Input')
     ax2.plot(time, u_hist[:, corner_idx], label='Corner Input')
@@ -116,6 +118,20 @@ def run_simulation_service(run_id):
     path2 = os.path.join(run_dir, 'input_trace.png')
     fig2.savefig(path2)
     plt.close(fig2)
+
+    # Plot 2b: Unconstrained Inputs
+    fig2b, ax2b = plt.subplots(figsize=(10, 6))
+    ax2b.plot(time, u_hist_unsat[:, center_idx], label='Center Input (Unsat)')
+    ax2b.plot(time, u_hist_unsat[:, corner_idx], label='Corner Input (Unsat)')
+    ax2b.set_title('Unconstrained Control Inputs')
+    ax2b.set_xlabel('Time (s)')
+    ax2b.set_ylabel('Power (W)')
+    ax2b.legend()
+    ax2b.grid(True)
+
+    path2b = os.path.join(run_dir, 'input_unsat_trace.png')
+    fig2b.savefig(path2b)
+    plt.close(fig2b)
     
     # Plot 3: Final Heatmap
     fig3, (ax3a, ax3b) = plt.subplots(1, 2, figsize=(12, 5))
@@ -139,6 +155,7 @@ def run_simulation_service(run_id):
     run.plot_temp_path = os.path.join('runs', str(run.id), 'temp_trace.png')
     run.plot_input_path = os.path.join('runs', str(run.id), 'input_trace.png')
     run.plot_heatmap_path = os.path.join('runs', str(run.id), 'heatmap.png')
+    run.plot_input_unsat_path = os.path.join('runs', str(run.id), 'input_unsat_trace.png')
     
     # Calc Stats
     run.rms_error = np.sqrt(np.mean(error**2))

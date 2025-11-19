@@ -72,6 +72,18 @@
             </div>
         </div>
     </div>
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">Unconstrained Inputs</div>
+            <div class="card-body">
+                {% if run.plot_input_unsat_path %}
+                    <img src="{{ MEDIA_URL }}{{ run.plot_input_unsat_path }}" class="img-fluid" alt="Unconstrained Control Inputs">
+                {% else %}
+                    <p class="text-muted">No plot available.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
     <div class="col-12 mb-4">
         <div class="card">
             <div class="card-header">Final Heatmap & Error</div>

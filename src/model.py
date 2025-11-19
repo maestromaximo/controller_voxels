@@ -45,17 +45,16 @@ class ThermalModel2D:
         return neighbors
         
     def _get_neighbors_distance(self, idx: int) -> List[Tuple[int, float]]:
-        """Get ALL other voxels with 1/r coupling."""
+        """Get ALL other voxels with 1/r^2 coupling (Gauss's Law approximation)."""
         neighbors = []
         cy, cx = self._get_voxel_coords(idx)
         
         # Base coupling at distance L (nearest neighbor distance)
-        # k(d) = C / d. We want k(L) = K_NEIGHBOR.
-        # So C = K_NEIGHBOR * L.
-        # Then k(d) = K_NEIGHBOR * (L / d)
+        # k(d) = K_NEIGHBOR * (L / d)^2
         
         L = params.VOXEL_SIDE_LENGTH
-        C = params.K_NEIGHBOR * L
+        # We want k(L) = K_NEIGHBOR
+        # So Constant = K_NEIGHBOR * L^2
         
         for i in range(self.num_voxels):
             if i == idx:
@@ -68,7 +67,8 @@ class ThermalModel2D:
             dist_grid = np.sqrt((cy-iy)**2 + (cx-ix)**2)
             dist_meters = dist_grid * L
             
-            k_val = C / dist_meters
+            # k = k0 * (L/d)^2
+            k_val = params.K_NEIGHBOR * (L / dist_meters)**2
             neighbors.append((i, k_val))
             
         return neighbors

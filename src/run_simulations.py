@@ -23,30 +23,42 @@ def run_simulation():
     
     # Common Simulation Settings
     dt = 0.05 
-    duration = 60.0
+    duration = 1500.0
     steps = int(duration / dt)
     time = np.linspace(0, duration, steps)
     
     def simulate(model, K, y0, T_target_map, saturation=True):
+        """
+        Simulate closed-loop dynamics, returning both saturated (applied)
+        and unsaturated LQR inputs.
+        """
         y_star, u_star = model.get_steady_state(T_target_map)
         y_current = y0.copy()
         y_hist = np.zeros((steps, 2*N))
-        u_hist = np.zeros((steps, N))
+        u_hist_sat = np.zeros((steps, N))
+        u_hist_unsat = np.zeros((steps, N))
         
         for i in range(steps):
             y_tilde = y_current - y_star
             delta_u = -K @ y_tilde
-            u_applied = u_star + delta_u
-            if saturation:
-                u_applied = np.clip(u_applied, 0.0, params.P_MAX)
-            y_hist[i] = y_current
-            u_hist[i] = u_applied
             
-            # Integrate
+            # Unconstrained LQR command
+            u_unsat = u_star + delta_u
+            # Applied command (possibly saturated)
+            if saturation:
+                u_applied = np.clip(u_unsat, 0.0, params.P_MAX)
+            else:
+                u_applied = u_unsat
+            
+            y_hist[i] = y_current
+            u_hist_sat[i] = u_applied
+            u_hist_unsat[i] = u_unsat
+            
+            # Integrate using applied input
             dy = model.sys.A @ y_current + model.sys.B @ u_applied + model.sys.E
             y_current += dy * dt
             
-        return time, y_hist, u_hist, y_star, u_star
+        return time, y_hist, u_hist_sat, u_hist_unsat, y_star, u_star
 
     # Initial Condition (Ambient)
     y0_amb, _ = model_nearest.get_steady_state(np.ones((NY, NX)) * params.TEMP_AMBIENT)
@@ -56,7 +68,7 @@ def run_simulation():
     T_target_1 = np.ones((NY, NX)) * params.TEMP_AMBIENT
     center_idx = (NY // 2, NX // 2)
     T_target_1[center_idx] = 100.0
-    t1, y1, u1, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_1)
+    t1, y1, u1_sat, u1_unsat, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_1)
     
     fig1, (ax1a, ax1b) = plt.subplots(2, 1, figsize=(8, 10))
     center_flat = center_idx[0]*NX + center_idx[1]
@@ -70,8 +82,8 @@ def run_simulation():
     ax1a.legend()
     ax1a.grid(True)
     
-    ax1b.plot(t1, u1[:, center_flat], label='Center Input')
-    ax1b.plot(t1, u1[:, neighbor_flat], label='Neighbor Input')
+    ax1b.plot(t1, u1_sat[:, center_flat], label='Center Input')
+    ax1b.plot(t1, u1_sat[:, neighbor_flat], label='Neighbor Input')
     ax1b.set_title('Control Inputs')
     ax1b.set_ylabel('Power (W)')
     ax1b.set_xlabel('Time (s)')
@@ -83,9 +95,10 @@ def run_simulation():
 
     # --- Simulation 2: Nearest Neighbor - Uniform Heating ---
     T_target_2 = np.ones((NY, NX)) * 100.0
-    t2, y2, u2, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_2)
+    t2, y2, u2_sat, u2_unsat, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_2)
     
-    fig2, (ax2a, ax2b) = plt.subplots(2, 1, figsize=(8, 10))
+    fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(8, 12))
+    # Temperature trajectories
     ax2a.plot(t2, y2[:, 0], label='Corner Voxel')
     ax2a.plot(t2, y2[:, center_flat], label='Center Voxel', linestyle='--')
     ax2a.axhline(100, color='k', linestyle=':', alpha=0.5)
@@ -95,14 +108,25 @@ def run_simulation():
     ax2a.legend()
     ax2a.grid(True)
     
-    ax2b.plot(t2, u2[:, 0], label='Corner Input')
-    ax2b.plot(t2, u2[:, center_flat], label='Center Input')
+    # Applied (saturated) inputs
+    ax2b.plot(t2, u2_sat[:, 0], label='Corner Input (Saturated)')
+    ax2b.plot(t2, u2_sat[:, center_flat], label='Center Input (Saturated)')
     ax2b.axhline(params.P_MAX, color='r', linestyle='--', label='Saturation Limit')
-    ax2b.set_title('Control Inputs')
+    ax2b.set_title('Control Inputs with Saturation')
     ax2b.set_ylabel('Power (W)')
     ax2b.set_xlabel('Time (s)')
     ax2b.legend()
     ax2b.grid(True)
+
+    # Unconstrained LQR inputs (for reference)
+    ax2c.plot(t2, u2_unsat[:, 0], label='Corner Input (Unsaturated)')
+    ax2c.plot(t2, u2_unsat[:, center_flat], label='Center Input (Unsaturated)')
+    ax2c.set_title('Unconstrained LQR Inputs (Not Physically Realizable)')
+    ax2c.set_ylabel('Power (W)')
+    ax2c.set_xlabel('Time (s)')
+    ax2c.legend()
+    ax2c.grid(True)
+
     fig2.tight_layout()
     fig2.savefig('figures_writting/sim_outputs/sim2_uniform_sat.png')
     plt.close(fig2)
@@ -110,11 +134,13 @@ def run_simulation():
     # --- Simulation 3: Nearest Neighbor - Gradient ---
     T_target_3 = np.ones((NY, NX)) * params.TEMP_AMBIENT
     for x in range(NX):
-        if x < NX // 2: T_target_3[:, x] = 100.0
-        else: T_target_3[:, x] = 20.0
-    t3, y3, u3, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_3)
+        if x < NX // 2:
+            T_target_3[:, x] = 100.0
+        else:
+            T_target_3[:, x] = 20.0
+    t3, y3, u3_sat, u3_unsat, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_3)
     
-    fig3, axes = plt.subplots(2, 2, figsize=(10, 8))
+    fig3, axes = plt.subplots(3, 2, figsize=(10, 12))
     T_final = y3[-1, :N].reshape((NY, NX))
     
     # Heatmap Helper
@@ -127,10 +153,25 @@ def run_simulation():
         cbar.set_label(cbar_label)
         return im
 
+    # Row 1: Temperatures (final and target)
     plot_heatmap(axes[0,0], T_final, 'Final Temp (Nearest)', 'Temp (°C)', 20, 100)
     plot_heatmap(axes[0,1], T_target_3, 'Target Temp', 'Temp (°C)', 20, 100)
-    plot_heatmap(axes[1,0], u3[-1, :].reshape((NY, NX)), 'Steady State Power', 'Power (W)', 0, params.P_MAX, cmap='plasma')
-    plot_heatmap(axes[1,1], T_final - T_target_3, 'Error (Actual - Target)', 'Error (°C)', -5, 5, cmap='RdBu_r')
+
+    # Row 2: Applied steady-state power and temperature error
+    plot_heatmap(axes[1,0], u3_sat[-1, :].reshape((NY, NX)),
+                 'Steady State Power (Saturated)', 'Power (W)',
+                 0, params.P_MAX, cmap='plasma')
+    plot_heatmap(axes[1,1], T_final - T_target_3,
+                 'Error (Actual - Target)', 'Error (°C)',
+                 -5, 5, cmap='RdBu_r')
+
+    # Row 3: Unconstrained LQR power and clipping map
+    plot_heatmap(axes[2,0], u3_unsat[-1, :].reshape((NY, NX)),
+                 'Unconstrained LQR Power', 'Power (W)',
+                 None, None, cmap='plasma')
+    plot_heatmap(axes[2,1], (u3_unsat[-1, :] - u3_sat[-1, :]).reshape((NY, NX)),
+                 'Clipping (Unsat - Sat)', 'Power (W)',
+                 None, None, cmap='RdBu_r')
     
     fig3.tight_layout()
     fig3.savefig('figures_writting/sim_outputs/sim3_gradient.png')
@@ -173,11 +214,11 @@ def run_simulation():
     print("Running Distance-Based Sims...")
     
     # Sim 4a: Step Response Comparison
-    t4, y4, u4, _, _ = simulate(model_distance, K_distance, y0_amb, T_target_1)
+    t4, y4, u4_sat, u4_unsat, _, _ = simulate(model_distance, K_distance, y0_amb, T_target_1)
     
     # --- EXTRA SIM: Long Duration Step Response ---
     print("Running Long Duration Sim...")
-    duration_long = 600.0 # 10 minutes
+    duration_long = 1500.0 # 25 minutes
     steps_long = int(duration_long / dt)
     time_long = np.linspace(0, duration_long, steps_long)
     
@@ -203,7 +244,7 @@ def run_simulation():
     fig6, ax6 = plt.subplots(figsize=(8, 6))
     ax6.plot(t_long_near, y_long_near[:, 0], 'b-', label='Nearest: Corner')
     ax6.plot(t_long_dist, y_long_dist[:, 0], 'r--', label='Distance: Corner')
-    ax6.set_title('Long Duration (600s) Far-Field Response')
+    ax6.set_title('Long Duration (1500s) Far-Field Response')
     ax6.set_ylabel('Temperature (°C)')
     ax6.set_xlabel('Time (s)')
     ax6.legend()
@@ -217,10 +258,34 @@ def run_simulation():
     # Target: Center = 20C, Surroundings = 100C
     T_target_7 = np.ones((NY, NX)) * 100.0
     T_target_7[center_idx] = 20.0
+
+    # Custom simulation to record both saturated and unsaturated inputs
+    y_star_7, u_star_7 = model_nearest.get_steady_state(T_target_7)
+    y_current = y0_amb.copy()
+    y7 = np.zeros((steps, 2 * N))
+    u7_sat = np.zeros((steps, N))
+    u7_unsat = np.zeros((steps, N))
+
+    for i in range(steps):
+        y_tilde = y_current - y_star_7
+        delta_u = -K_nearest @ y_tilde
+
+        # Unsaturated LQR command
+        u_unsat = u_star_7 + delta_u
+        # Applied (saturated) command respecting physical limits
+        u_sat = np.clip(u_unsat, 0.0, params.P_MAX)
+
+        y7[i] = y_current
+        u7_sat[i] = u_sat
+        u7_unsat[i] = u_unsat
+
+        dy = model_nearest.sys.A @ y_current + model_nearest.sys.B @ u_sat + model_nearest.sys.E
+        y_current += dy * dt
+
+    t7 = time
     
-    t7, y7, u7, _, _ = simulate(model_nearest, K_nearest, y0_amb, T_target_7)
-    
-    fig7, (ax7a, ax7b) = plt.subplots(2, 1, figsize=(8, 10))
+    fig7, (ax7a, ax7b, ax7c) = plt.subplots(3, 1, figsize=(8, 12))
+    # Temperature response (with saturated inputs)
     ax7a.plot(t7, y7[:, center_flat], label='Center Voxel (Target 20°C)')
     ax7a.plot(t7, y7[:, neighbor_flat], label='Neighbor Voxel (Target 100°C)')
     ax7a.axhline(20.0, color='g', linestyle='--', label='Center Target')
@@ -231,13 +296,23 @@ def run_simulation():
     ax7a.legend()
     ax7a.grid(True)
     
-    ax7b.plot(t7, u7[:, center_flat], label='Center Input')
-    ax7b.plot(t7, u7[:, neighbor_flat], label='Neighbor Input')
+    # Saturated control inputs (applied)
+    ax7b.plot(t7, u7_sat[:, center_flat], label='Center Input (Saturated)')
+    ax7b.plot(t7, u7_sat[:, neighbor_flat], label='Neighbor Input (Saturated)')
     ax7b.set_ylabel('Power (W)')
     ax7b.set_xlabel('Time (s)')
-    ax7b.set_title('Control Inputs (Center rails at 0W)')
+    ax7b.set_title('Control Inputs with Saturation (Center rails at 0W)')
     ax7b.legend()
     ax7b.grid(True)
+
+    # Unsaturated LQR commands (for reference)
+    ax7c.plot(t7, u7_unsat[:, center_flat], label='Center Input (Unsaturated)')
+    ax7c.plot(t7, u7_unsat[:, neighbor_flat], label='Neighbor Input (Unsaturated)')
+    ax7c.set_ylabel('Power (W)')
+    ax7c.set_xlabel('Time (s)')
+    ax7c.set_title('Unconstrained LQR Inputs (Not Physically Realizable)')
+    ax7c.legend()
+    ax7c.grid(True)
     
     fig7.tight_layout()
     fig7.savefig('figures_writting/sim_outputs/sim7_impossible_trap.png')
@@ -339,7 +414,7 @@ def run_simulation():
     plt.close(fig4)
     
     # Sim 4b: Gradient Heatmap Comparison
-    t5, y5, u5, _, _ = simulate(model_distance, K_distance, y0_amb, T_target_3)
+    t5, y5, u5_sat, u5_unsat, _, _ = simulate(model_distance, K_distance, y0_amb, T_target_3)
     
     fig5, axes = plt.subplots(2, 2, figsize=(10, 8))
     T_final_dist = y5[-1, :N].reshape((NY, NX))

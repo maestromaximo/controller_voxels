@@ -23,7 +23,7 @@ To validate the proposed Linear Quadratic Regulator (LQR) control scheme, we per
 \subsection{Physical Parameters}
 The simulation parameters were derived based on the physical properties of air at standard temperature and pressure, with the small heater/sensor nodes suspended in each voxel. The parameters strictly follow the linear model derived in Section~\ref{sec:modelling}, assuming pure conduction between nodes.
 
-The heater nodes possess a significantly higher heat capacity than the air surrounding them ($c_{heater} \approx 1.6\,\text{J/K}$ vs $c_{air} \approx 0.26\,\text{J/K}$), leading to a system where the actuator dynamics are slower than the plant dynamics. The coupling coefficients $k_{ij}$ and $\kappa_i$ are derived from the thermal conductivity of air ($k_{th} \approx 0.026\,\text{W/mK}$).
+    The heater nodes possess a significantly higher heat capacity than the air surrounding them ($c_{heater} \approx 1.6\,\text{J/K}$ vs $c_{air} \approx 0.26\,\text{J/K}$), leading to a system where the actuator dynamics are slower than the thermal volume dynamics. The coupling coefficients $k_{ij}$ and $\kappa_i$ are derived from the thermal conductivity of air ($k_{th} \approx 0.026\,\text{W/mK}$).
 
 The derived model coefficients are summarized in Table~\ref{tab:params}.
 
@@ -61,11 +61,11 @@ For adjacent voxels sharing a face, the distance $d$ is the voxel side length $L
 Substituting our parameters ($k_{th}=0.026, L=0.06, c_i=0.26$) yields the baseline rate $k_0 \approx 0.006\,\text{s}^{-1}$.
 
 \subsubsection*{Distance-Based Model}
-For the extended model considering global interactions, we assume the effective conductance decays inversely with Euclidean distance $d_{ij}$ between voxel centers. The general coupling coefficient is:
-\begin{equation}
-    k_{ij} = k_0 \left(\frac{L}{d_{ij}}\right)
-\end{equation}
-where $k_0$ is the nearest-neighbor rate derived above. This ensures that adjacent voxels ($d_{ij}=L$) retain the same coupling strength, while remote voxels interact with reduced intensity.
+    For the extended model considering global interactions, we assume the effective conductance decays with the inverse square of the Euclidean distance $d_{ij}$ between voxel centers, motivated by Gauss's law for flux from a point source. The general coupling coefficient is:
+    \begin{equation}
+        k_{ij} = k_0 \left(\frac{L}{d_{ij}}\right)^2
+    \end{equation}
+    where $k_0$ is the nearest-neighbor rate derived above. This ensures that adjacent voxels ($d_{ij}=L$) retain the same coupling strength, while remote voxels interact with reduced intensity.
 
 \subsection{Simulation 1: Single Voxel Step Response}
 The first test commands the center voxel (coordinates $(2,2)$) to $100^\circ$C. In this and subsequent plots, "Neighbor" refers to the adjacent voxel at $(2,3)$, and "Corner" refers to the far-field voxel at $(0,0)$.
@@ -106,25 +106,25 @@ The error map reveals a fundamental limitation: while the hot side tracks perfec
 \section{Distance-Based Coupling}
 We extended the model to investigate the effect of long-range thermal interactions. In the standard model, heat transfer is restricted to nearest neighbors (sharing a face). Here, we introduce a global coupling term where every voxel interacts with every other voxel, utilizing the inverse-distance decay law derived in the previous section. This models a more diffuse radiative or convective heat transfer mechanism that is not strictly local.
 
-\subsection{Simulation 4: Impact of Global Coupling}
-Figure~\ref{fig:sim4} compares the step response of the Center voxel between the Nearest-Neighbor (Blue) and Distance-Based (Red) models.
-The primary effect of the $1/d$ coupling is an increase in effective thermal inertia and crosstalk. The "Distance: Neighbor" trace (red dotted line) rises clearly, indicating that heat is "leaking" via the direct $1/d$ coupling to the surrounding volume.
-
-In contrast, the far-field response (Corner Voxel, bottom panel) reveals a critical dynamic difference. For the Nearest-Neighbor model, the corner voxel temperature remains effectively constant ($20.0^\circ$C) over the 60-second window. This is physically expected: with $k_{ij} \approx 0.006\,\text{s}^{-1}$, the diffusion time constant is $\tau \approx 160\,\text{s}$. Heat must hop sequentially through two intervening voxels to reach the corner, a process that takes significantly longer than the simulation horizon. The Distance-Based model, however, acts as a "thermal short-circuit," allowing heat to radiate directly from the center to the corner, causing an immediate (albeit slow) rise.
+    \subsection{Simulation 4: Impact of Global Coupling}
+    Figure~\ref{fig:sim4} compares the step response of the Center voxel between the Nearest-Neighbor (Blue) and Distance-Based (Red) models.
+    The primary effect of the $1/d^2$ coupling is an increase in effective thermal inertia and crosstalk. The "Distance: Neighbor" trace (red dotted line) rises clearly, indicating that heat is "leaking" via the direct coupling to the surrounding volume.
+    
+    In contrast, the far-field response (Corner Voxel, bottom panel) reveals a critical dynamic difference. For the Nearest-Neighbor model, the corner voxel temperature rises slowly after a significant transport lag. This is physically expected: with $k_{ij} \approx 0.006\,\text{s}^{-1}$, the diffusion time constant is $\tau \approx 160\,\text{s}$. Heat must hop sequentially through two intervening voxels to reach the corner. The Distance-Based model, however, acts as a "thermal short-circuit," allowing heat to radiate directly from the center to the corner, causing an immediate rise that precedes the diffusive wave.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{sim_outputs/sim4_comparison_step.png}
-    \caption{Comparison of step response for Nearest-Neighbor vs. Distance-Based coupling. Note the flat response of the corner voxel in the nearest-neighbor case (blue solid), indicating that the diffusion wave has not yet reached the boundary.}
+    \caption{Comparison of step response for Nearest-Neighbor vs. Distance-Based coupling over 1500s. The corner voxel in the nearest-neighbor case (blue solid) shows a distinct transport lag compared to the immediate response of the distance-based model (red dashed).}
     \label{fig:sim4}
 \end{figure}
 
-To verify the diffusion behavior, we extended the simulation to 600 seconds (10 minutes). Figure~\ref{fig:sim6} confirms that the Nearest-Neighbor model does eventually propagate heat to the corner, but with a significant time lag compared to the global coupling model.
+To verify the diffusion behavior, we extended the simulation to 1500 seconds (25 minutes). Figure~\ref{fig:sim6} confirms that the Nearest-Neighbor model does eventually propagate heat to the corner, but with a significant time lag compared to the global coupling model.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{sim_outputs/sim6_long_duration.png}
-    \caption{Long duration (600s) response of the corner voxel. The Nearest-Neighbor model (Blue) shows a distinct transport lag, while the Distance-Based model (Red) responds immediately due to direct coupling.}
+    \caption{Long duration (1500s) response of the corner voxel. The Nearest-Neighbor model (Blue) shows a distinct transport lag, while the Distance-Based model (Red) responds immediately due to direct coupling.}
     \label{fig:sim6}
 \end{figure}
 

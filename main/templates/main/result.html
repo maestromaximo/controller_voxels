@@ -1,0 +1,90 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>Simulation Run #{{ run.id }}</h1>
+        <p class="text-muted mb-0">{{ run.config.name }} • {{ run.timestamp|date:"Y-m-d H:i" }}</p>
+        <span class="badge bg-{% if run.status == 'completed' %}success{% elif run.status == 'failed' %}danger{% else %}warning{% endif %}">
+            {{ run.status|title }}
+        </span>
+    </div>
+    <div>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary me-2">Back to Dashboard</a>
+        <a href="{% url 'create_simulation' %}" class="btn btn-primary">New Simulation</a>
+    </div>
+</div>
+
+{% if run.status == 'failed' %}
+    <div class="alert alert-danger">
+        This simulation failed. Please adjust the configuration and try again.
+    </div>
+{% endif %}
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">Summary</div>
+            <div class="card-body">
+                <p><strong>Grid:</strong> {{ run.config.nx }} × {{ run.config.ny }}</p>
+                <p><strong>Duration:</strong> {{ run.config.duration }} s (Δt = {{ run.config.dt }})</p>
+                <p><strong>Coupling:</strong> {{ run.config.get_coupling_mode_display }}</p>
+                <p><strong>Ambient:</strong> {{ run.config.temp_ambient }} °C</p>
+                <p><strong>RMS Error:</strong> {{ run.rms_error|default:"—" }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header">Control Weights</div>
+            <div class="card-body row">
+                <div class="col-4"><strong>Q<sub>T</sub>:</strong> {{ run.config.q_temp_weight }}</div>
+                <div class="col-4"><strong>Q<sub>E</sub>:</strong> {{ run.config.q_energy_weight }}</div>
+                <div class="col-4"><strong>R:</strong> {{ run.config.r_weight }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if run.status == 'completed' %}
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">Temperature Trace</div>
+            <div class="card-body">
+                {% if run.plot_temp_path %}
+                    <img src="{{ MEDIA_URL }}{{ run.plot_temp_path }}" class="img-fluid" alt="Temperature Trace">
+                {% else %}
+                    <p class="text-muted">No plot available.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">Control Inputs</div>
+            <div class="card-body">
+                {% if run.plot_input_path %}
+                    <img src="{{ MEDIA_URL }}{{ run.plot_input_path }}" class="img-fluid" alt="Control Inputs">
+                {% else %}
+                    <p class="text-muted">No plot available.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header">Final Heatmap & Error</div>
+            <div class="card-body text-center">
+                {% if run.plot_heatmap_path %}
+                    <img src="{{ MEDIA_URL }}{{ run.plot_heatmap_path }}" class="img-fluid" alt="Heatmap">
+                {% else %}
+                    <p class="text-muted">No heatmap available.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+

@@ -13,3 +13,7 @@ __pycache__/
 *.pyzwz
 *.pyzwzw
 *.pyzwzwz
+
+db.sqlite3
+/media
+/staticfiles

@@ -14,9 +14,10 @@ class SystemMatrices:
     C_matrices: Tuple[np.ndarray, np.ndarray] # (C_voxel, C_heater) diagonal matrices
 
 class ThermalModel2D:
-    def __init__(self, nx: int, ny: int, coupling_mode: str = 'nearest'):
+    def __init__(self, nx: int, ny: int, coupling_mode: str = 'nearest', config: Optional[dict] = None):
         """
         coupling_mode: 'nearest' (default) or 'distance' (inverse distance decay)
+        config: Dictionary containing physical parameters. If None, uses src.parameters defaults.
         """
         self.nx = nx
         self.ny = ny
@@ -24,6 +25,20 @@ class ThermalModel2D:
         self.num_states = 2 * self.num_voxels # [T_1...T_N, E_1...E_N]
         self.coupling_mode = coupling_mode
         
+        # Load configuration
+        if config is None:
+            self.config = {
+                'k_neighbor': params.K_NEIGHBOR,
+                'kappa': params.KAPPA,
+                'k_env': params.K_ENV,
+                'c_v': params.VOXEL_HEAT_CAPACITY,
+                'c_h': params.HEATER_HEAT_CAPACITY,
+                'temp_ambient': params.TEMP_AMBIENT,
+                'voxel_side_length': params.VOXEL_SIDE_LENGTH
+            }
+        else:
+            self.config = config
+
         # Map (x, y) to index
         self.idx_map = np.arange(self.num_voxels).reshape((ny, nx))
         
@@ -37,11 +52,13 @@ class ThermalModel2D:
         neighbors = []
         cy, cx = self._get_voxel_coords(idx)
         
+        k_neighbor = self.config['k_neighbor']
+
         for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             ny, nx = cy + dy, cx + dx
             if 0 <= ny < self.ny and 0 <= nx < self.nx:
                 n_idx = self.idx_map[ny, nx]
-                neighbors.append((n_idx, params.K_NEIGHBOR))
+                neighbors.append((n_idx, k_neighbor))
         return neighbors
         
     def _get_neighbors_distance(self, idx: int) -> List[Tuple[int, float]]:
@@ -52,7 +69,8 @@ class ThermalModel2D:
         # Base coupling at distance L (nearest neighbor distance)
         # k(d) = K_NEIGHBOR * (L / d)^2
         
-        L = params.VOXEL_SIDE_LENGTH
+        L = self.config['voxel_side_length']
+        k_neighbor = self.config['k_neighbor']
         # We want k(L) = K_NEIGHBOR
         # So Constant = K_NEIGHBOR * L^2
         
@@ -68,7 +86,7 @@ class ThermalModel2D:
             dist_meters = dist_grid * L
             
             # k = k0 * (L/d)^2
-            k_val = params.K_NEIGHBOR * (L / dist_meters)**2
+            k_val = k_neighbor * (L / dist_meters)**2
             neighbors.append((i, k_val))
             
         return neighbors
@@ -92,10 +110,11 @@ class ThermalModel2D:
         E_vec = np.zeros(2 * N)
         
         # Parameters
-        kappa = params.KAPPA
-        k_env = params.K_ENV
-        c_v = params.VOXEL_HEAT_CAPACITY
-        c_h = params.HEATER_HEAT_CAPACITY
+        kappa = self.config['kappa']
+        k_env = self.config['k_env']
+        c_v = self.config['c_v']
+        c_h = self.config['c_h']
+        temp_ambient = self.config['temp_ambient']
         
         # Fill matrices
         for i in range(N):
@@ -127,7 +146,7 @@ class ThermalModel2D:
             Delta[i, i] = -kappa
             
             # Environmental vector E
-            E_vec[i] = k_env * params.TEMP_AMBIENT
+            E_vec[i] = k_env * temp_ambient
             
         # Assemble A
         A_top = np.hstack([Lambda + Lambda_prime, Psi])

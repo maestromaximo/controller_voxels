@@ -1,0 +1,187 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h2>Configure Simulation</h2>
+
+<form method="post" id="simForm">
+    {% csrf_token %}
+    
+    <div class="row">
+        <div class="col-md-4">
+            <h4>General & Dimensions</h4>
+            <div class="mb-3">
+                {{ form.name.label_tag }} {{ form.name }}
+            </div>
+            <div class="row">
+                <div class="col-6">{{ form.nx.label_tag }} {{ form.nx }}</div>
+                <div class="col-6">{{ form.ny.label_tag }} {{ form.ny }}</div>
+            </div>
+            <div class="mb-3">{{ form.voxel_size.label_tag }} {{ form.voxel_size }}</div>
+            <div class="mb-3">{{ form.duration.label_tag }} {{ form.duration }}</div>
+            <div class="mb-3">{{ form.dt.label_tag }} {{ form.dt }}</div>
+        </div>
+        
+        <div class="col-md-4">
+            <h4>Physical Parameters</h4>
+            <div class="mb-3">{{ form.density.label_tag }} {{ form.density }}</div>
+            <div class="mb-3">{{ form.specific_heat.label_tag }} {{ form.specific_heat }}</div>
+            <div class="mb-3">{{ form.thermal_conductivity.label_tag }} {{ form.thermal_conductivity }}</div>
+            <div class="mb-3">{{ form.heater_heat_capacity.label_tag }} {{ form.heater_heat_capacity }}</div>
+            <div class="mb-3">{{ form.coupling_mode.label_tag }} {{ form.coupling_mode }}</div>
+            <div class="mb-3">{{ form.temp_ambient.label_tag }} {{ form.temp_ambient }}</div>
+        </div>
+        
+        <div class="col-md-4">
+            <h4>Control Parameters</h4>
+            <div class="mb-3">{{ form.q_temp_weight.label_tag }} {{ form.q_temp_weight }}</div>
+            <div class="mb-3">{{ form.q_energy_weight.label_tag }} {{ form.q_energy_weight }}</div>
+            <div class="mb-3">{{ form.r_weight.label_tag }} {{ form.r_weight }}</div>
+            <div class="mb-3">{{ form.p_max.label_tag }} {{ form.p_max }}</div>
+        </div>
+    </div>
+
+    <hr>
+
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <h4>Target Temperature Grid</h4>
+            <div class="mb-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="applyPreset('uniform')">Uniform (Ambient)</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="applyPreset('center')">Center Step (100°C)</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="applyPreset('gradient')">Gradient (Left 100, Right 20)</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="applyPreset('checker')">Checkerboard</button>
+            </div>
+            
+            <div id="grid-container" class="voxel-grid"></div>
+            
+            <!-- Hidden field to store the matrix -->
+            {{ form.target_temp_matrix }}
+        </div>
+    </div>
+
+    <div class="mt-4 mb-5">
+        <button type="submit" class="btn btn-primary btn-lg">Save & Run Simulation</button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const nxInput = document.getElementById('id_nx');
+    const nyInput = document.getElementById('id_ny');
+    const ambientInput = document.getElementById('id_temp_ambient');
+    const matrixInput = document.getElementById('id_target_temp_matrix');
+    const gridContainer = document.getElementById('grid-container');
+
+    function updateGrid() {
+        const nx = parseInt(nxInput.value) || 5;
+        const ny = parseInt(nyInput.value) || 5;
+        
+        gridContainer.style.gridTemplateColumns = `repeat(${nx}, 50px)`;
+        
+        // Save current values if possible
+        const currentValues = [];
+        document.querySelectorAll('.voxel-cell input').forEach(input => {
+            currentValues.push(input.value);
+        });
+
+        gridContainer.innerHTML = '';
+        
+        let currentMatrix = [];
+        try {
+            currentMatrix = JSON.parse(matrixInput.value);
+        } catch(e) {}
+
+        for (let y = 0; y < ny; y++) {
+            for (let x = 0; x < nx; x++) {
+                const cell = document.createElement('div');
+                cell.className = 'voxel-cell';
+                
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.step = '0.1';
+                input.dataset.x = x;
+                input.dataset.y = y;
+                
+                // Try to preserve value or use ambient
+                let val = ambientInput.value;
+                if (currentMatrix[y] && currentMatrix[y][x] !== undefined) {
+                    val = currentMatrix[y][x];
+                }
+                input.value = val;
+                
+                input.addEventListener('change', updateMatrixJson);
+                
+                cell.appendChild(input);
+                gridContainer.appendChild(cell);
+            }
+        }
+        updateMatrixJson();
+    }
+
+    function updateMatrixJson() {
+        const nx = parseInt(nxInput.value) || 5;
+        const ny = parseInt(nyInput.value) || 5;
+        const matrix = [];
+        
+        const inputs = document.querySelectorAll('.voxel-cell input');
+        
+        for (let y = 0; y < ny; y++) {
+            const row = [];
+            for (let x = 0; x < nx; x++) {
+                const index = y * nx + x;
+                if (inputs[index]) {
+                    row.push(parseFloat(inputs[index].value) || 0);
+                } else {
+                    row.push(parseFloat(ambientInput.value) || 0);
+                }
+            }
+            matrix.push(row);
+        }
+        
+        matrixInput.value = JSON.stringify(matrix);
+    }
+
+    function applyPreset(type) {
+        const nx = parseInt(nxInput.value) || 5;
+        const ny = parseInt(nyInput.value) || 5;
+        const ambient = parseFloat(ambientInput.value) || 20.0;
+        const inputs = document.querySelectorAll('.voxel-cell input');
+        
+        inputs.forEach(input => {
+            const x = parseInt(input.dataset.x);
+            const y = parseInt(input.dataset.y);
+            
+            if (type === 'uniform') {
+                input.value = ambient;
+            } else if (type === 'center') {
+                if (x === Math.floor(nx/2) && y === Math.floor(ny/2)) {
+                    input.value = 100.0;
+                } else {
+                    input.value = ambient;
+                }
+            } else if (type === 'gradient') {
+                if (x < nx/2) {
+                    input.value = 100.0;
+                } else {
+                    input.value = 20.0;
+                }
+            } else if (type === 'checker') {
+                if ((x + y) % 2 === 0) {
+                    input.value = 80.0;
+                } else {
+                    input.value = 40.0;
+                }
+            }
+        });
+        updateMatrixJson();
+    }
+
+    nxInput.addEventListener('change', updateGrid);
+    nyInput.addEventListener('change', updateGrid);
+    
+    // Initialize
+    updateGrid();
+</script>
+{% endblock %}
+

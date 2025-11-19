@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib import animation
 import os
 from django.conf import settings
 from src.model import ThermalModel2D
@@ -136,7 +137,8 @@ def run_simulation_service(run_id):
     # Plot 3: Final Heatmap
     fig3, (ax3a, ax3b) = plt.subplots(1, 2, figsize=(12, 5))
     
-    T_final = y_hist[-1, :N].reshape((config.ny, config.nx))
+    T_history = y_hist[:, :N].reshape((steps, config.ny, config.nx))
+    T_final = T_history[-1]
     im1 = ax3a.imshow(T_final, cmap='inferno', origin='upper')
     ax3a.set_title('Final Temperature')
     plt.colorbar(im1, ax=ax3a)
@@ -149,6 +151,48 @@ def run_simulation_service(run_id):
     path3 = os.path.join(run_dir, 'heatmap.png')
     fig3.savefig(path3)
     plt.close(fig3)
+
+    # Animation: Temperature & Error evolution (5 seconds)
+    num_frames = min(100, steps) if steps > 1 else 1
+    frame_indices = np.linspace(0, steps - 1, num_frames, dtype=int) if num_frames > 1 else [steps - 1]
+    interval_ms = 5000 / num_frames if num_frames > 0 else 5000
+
+    err_history = T_history - T_target
+    temp_vmin, temp_vmax = np.min(T_history), np.max(T_history)
+    err_abs = np.max(np.abs(err_history))
+    err_vlim = max(err_abs, 1.0)
+
+    fig_anim, (ax_anim_temp, ax_anim_err) = plt.subplots(1, 2, figsize=(12, 5))
+    im_temp = ax_anim_temp.imshow(T_history[frame_indices[0]], cmap='inferno', origin='upper',
+                                  vmin=temp_vmin, vmax=temp_vmax)
+    ax_anim_temp.set_title('Temperature Evolution')
+    plt.colorbar(im_temp, ax=ax_anim_temp)
+
+    im_err = ax_anim_err.imshow(err_history[frame_indices[0]], cmap='RdBu_r', origin='upper',
+                                vmin=-err_vlim, vmax=err_vlim)
+    ax_anim_err.set_title('Error Evolution')
+    plt.colorbar(im_err, ax=ax_anim_err)
+
+    def update_anim(frame_idx):
+        idx = frame_indices[frame_idx]
+        im_temp.set_data(T_history[idx])
+        ax_anim_temp.set_xlabel(f"t = {time[idx]:.1f} s")
+        im_err.set_data(err_history[idx])
+        ax_anim_err.set_xlabel(f"t = {time[idx]:.1f} s")
+        return im_temp, im_err
+
+    anim = animation.FuncAnimation(
+        fig_anim,
+        update_anim,
+        frames=num_frames,
+        interval=interval_ms,
+        blit=False
+    )
+
+    path_anim = os.path.join(run_dir, 'heatmap_anim.gif')
+    fps = max(1, num_frames / 5 if num_frames > 0 else 1)
+    anim.save(path_anim, writer=animation.PillowWriter(fps=fps))
+    plt.close(fig_anim)
     
     # 7. Update Run
     run.status = 'completed'
@@ -156,6 +200,7 @@ def run_simulation_service(run_id):
     run.plot_input_path = os.path.join('runs', str(run.id), 'input_trace.png')
     run.plot_heatmap_path = os.path.join('runs', str(run.id), 'heatmap.png')
     run.plot_input_unsat_path = os.path.join('runs', str(run.id), 'input_unsat_trace.png')
+    run.plot_heatmap_anim_path = os.path.join('runs', str(run.id), 'heatmap_anim.gif')
     
     # Calc Stats
     run.rms_error = np.sqrt(np.mean(error**2))

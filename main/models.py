@@ -60,6 +60,7 @@ class SimulationRun(models.Model):
     plot_input_path = models.CharField(max_length=255, blank=True, null=True)
     plot_heatmap_path = models.CharField(max_length=255, blank=True, null=True)
     plot_input_unsat_path = models.CharField(max_length=255, blank=True, null=True)
+    plot_heatmap_anim_path = models.CharField(max_length=255, blank=True, null=True)
     
     rms_error = models.FloatField(null=True, blank=True)
     settling_time = models.FloatField(null=True, blank=True)

@@ -67,6 +67,17 @@ class SimulationResultView(FormMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+        if 'generate_animation' in request.POST:
+            self.object.status = 'pending'
+            self.object.save(update_fields=['status'])
+            try:
+                run_simulation_service(self.object.id, generate_animation=True)
+            except Exception as e:
+                self.object.status = 'failed'
+                self.object.save(update_fields=['status'])
+                print(f"Animation generation failed: {e}")
+            return redirect('simulation_result', pk=self.object.id)
+
         form = self.get_form()
         if form.is_valid():
             config = self.object.config

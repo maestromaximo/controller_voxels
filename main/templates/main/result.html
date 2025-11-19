@@ -36,11 +36,37 @@
     </div>
     <div class="col-md-8">
         <div class="card mb-4">
-            <div class="card-header">Control Weights</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Control Weights</span>
+                <small class="text-muted">Adjust and recompute</small>
+            </div>
             <div class="card-body row">
                 <div class="col-4"><strong>Q<sub>T</sub>:</strong> {{ run.config.q_temp_weight }}</div>
                 <div class="col-4"><strong>Q<sub>E</sub>:</strong> {{ run.config.q_energy_weight }}</div>
                 <div class="col-4"><strong>R:</strong> {{ run.config.r_weight }}</div>
+            </div>
+            <div class="card-body border-top">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            {{ recompute_form.q_temp_weight.label_tag }} {{ recompute_form.q_temp_weight }}
+                        </div>
+                        <div class="col-md-4">
+                            {{ recompute_form.q_energy_weight.label_tag }} {{ recompute_form.q_energy_weight }}
+                        </div>
+                        <div class="col-md-4">
+                            {{ recompute_form.r_weight.label_tag }} {{ recompute_form.r_weight }}
+                        </div>
+                        <div class="col-md-6">
+                            {{ recompute_form.duration.label_tag }} {{ recompute_form.duration }}
+                        </div>
+                        <div class="col-md-6">
+                            {{ recompute_form.dt.label_tag }} {{ recompute_form.dt }}
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary mt-3">Recompute</button>
+                </form>
             </div>
         </div>
     </div>

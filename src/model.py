@@ -48,6 +48,8 @@ class ThermalModel2D:
             np.eye(self.num_voxels),
             np.zeros((self.num_voxels, self.num_voxels))
         ])
+        self._phi_cache = {}
+        self._step_response_cache = {}
         
     def _get_voxel_coords(self, idx: int) -> Tuple[int, int]:
         return divmod(idx, self.nx)
@@ -264,7 +266,21 @@ class ThermalModel2D:
         """
         Matrix exponential Φ(H) = e^{A H}.
         """
-        return scipy.linalg.expm(self.sys.A * horizon)
+        if horizon not in self._phi_cache:
+            self._phi_cache[horizon] = scipy.linalg.expm(self.sys.A * horizon)
+        return self._phi_cache[horizon]
+
+    def get_step_response_matrix(self, horizon: float) -> np.ndarray:
+        """
+        Cached step response matrix S = 𝔅 A^{-1} (Φ(H) - I) B.
+        """
+        if horizon not in self._step_response_cache:
+            Phi = self._phi(horizon)
+            identity = np.eye(self.sys.A.shape[0])
+            self._step_response_cache[horizon] = self.selector_T @ (
+                self._A_inv @ ((Phi - identity) @ self.sys.B)
+            )
+        return self._step_response_cache[horizon]
 
     def predict_state(self, y_current: np.ndarray, u_current: np.ndarray, horizon: float) -> np.ndarray:
         """
@@ -292,26 +308,34 @@ class ThermalModel2D:
                  y_target: np.ndarray,
                  horizon: float,
                  q_diag: np.ndarray,
-                 p_max: float) -> np.ndarray:
+                 p_max: float,
+                 step_response: Optional[np.ndarray] = None,
+                 q_matrix: Optional[np.ndarray] = None,
+                 qs_solver: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Single MPC move following Eqs. (377)-(398):
             Δu = (Q S)^{-1} e_C
             e_C = Q (y* - y_traj[t+H])
         Subject to Δu ∈ [-u(t), p - u(t)].
         """
-        S = self.compute_step_response_matrix(horizon)
-        Q = np.diag(q_diag)
+        if step_response is None:
+            step_response = self.get_step_response_matrix(horizon)
+        if q_matrix is None:
+            q_matrix = np.diag(q_diag)
 
         y_pred = self.predict_state(y_current, u_current, horizon)
         temp_pred = self.selector_T @ y_pred
         temp_target = self.selector_T @ y_target
-        e_C = Q @ (temp_target - temp_pred)
+        e_C = q_matrix @ (temp_target - temp_pred)
 
-        QS = Q @ S
-        try:
-            delta_u = np.linalg.solve(QS, e_C)
-        except np.linalg.LinAlgError:
-            delta_u = np.linalg.pinv(QS) @ e_C
+        if qs_solver is not None:
+            delta_u = qs_solver @ e_C
+        else:
+            QS = q_matrix @ step_response
+            try:
+                delta_u = np.linalg.solve(QS, e_C)
+            except np.linalg.LinAlgError:
+                delta_u = np.linalg.pinv(QS) @ e_C
 
         lower_bounds = -u_current
         upper_bounds = p_max - u_current
@@ -332,10 +356,13 @@ class ThermalModel2D:
 
         if alpha < 1.0 - tol:
             e_C_star = e_C * alpha
-            try:
-                delta_u = np.linalg.solve(QS, e_C_star)
-            except np.linalg.LinAlgError:
-                delta_u = np.linalg.pinv(QS) @ e_C_star
+            if qs_solver is not None:
+                delta_u = qs_solver @ e_C_star
+            else:
+                try:
+                    delta_u = np.linalg.solve(q_matrix @ step_response, e_C_star)
+                except np.linalg.LinAlgError:
+                    delta_u = np.linalg.pinv(q_matrix @ step_response) @ e_C_star
 
         delta_u = np.clip(delta_u, lower_bounds, upper_bounds)
 

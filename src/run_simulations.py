@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import os
+import math
 from src.model import ThermalModel2D
 import src.parameters as params
 
@@ -20,7 +21,7 @@ def run_simulation():
     Q_T_W, Q_E_W, R_W = 100.0, 0.1, 0.001
     K_nearest, _ = model_nearest.design_lqr(Q_T_W, Q_E_W, R_W)
     K_distance, _ = model_distance.design_lqr(Q_T_W, Q_E_W, R_W)
-    MPC_HORIZON = 5.0
+    MPC_HORIZON = 1
     
     # Common Simulation Settings
     dt = 0.05 
@@ -62,19 +63,22 @@ def run_simulation():
         return time, y_hist, u_hist_sat, u_hist_unsat, y_star, u_star
 
     def simulate_mpc(model, y0, T_target_map, horizon=MPC_HORIZON, q_temp_weight=1.0,
-                     steps_override=None, dt_override=None):
+                     steps_override=None, dt_override=None, record_interval=1):
         """
         Simulate MPC closed-loop using the formulation from src.model.
         """
         y_star, u_star = model.get_steady_state(T_target_map)
         local_steps = steps_override if steps_override is not None else steps
         local_dt = dt_override if dt_override is not None else dt
-        local_time = np.linspace(0, local_steps * local_dt, local_steps)
+        sample_interval = max(1, int(record_interval))
+        sample_count = math.ceil(local_steps / sample_interval)
+        local_time = np.zeros(sample_count)
 
         y_current = y0.copy()
+        # u_current = np.zeros(N)
         u_current = np.clip(u_star.copy(), 0.0, params.P_MAX)
-        y_hist = np.zeros((local_steps, 2 * N))
-        u_hist = np.zeros((local_steps, N))
+        y_hist = np.zeros((sample_count, 2 * N))
+        u_hist = np.zeros((sample_count, N))
 
         q_diag = np.ones(N) * q_temp_weight
         Q_matrix = np.diag(q_diag)
@@ -85,6 +89,7 @@ def run_simulation():
         except np.linalg.LinAlgError:
             QS_solver = np.linalg.pinv(QS)
 
+        sample_idx = 0
         for i in range(local_steps):
             delta_u = model.mpc_step(
                 y_current,
@@ -100,11 +105,18 @@ def run_simulation():
             u_candidate = u_current + delta_u
             u_current = np.clip(u_candidate, 0.0, params.P_MAX)
 
-            y_hist[i] = y_current
-            u_hist[i] = u_current
+            if i % sample_interval == 0 and sample_idx < sample_count:
+                y_hist[sample_idx] = y_current
+                u_hist[sample_idx] = u_current
+                local_time[sample_idx] = i * local_dt
+                sample_idx += 1
 
             dy = model.sys.A @ y_current + model.sys.B @ u_current + model.sys.E
             y_current += dy * local_dt
+
+        y_hist[-1] = y_current
+        u_hist[-1] = u_current
+        local_time[-1] = (local_steps - 1) * local_dt
 
         return local_time, y_hist, u_hist, y_star
 
@@ -559,16 +571,19 @@ def run_simulation():
     plt.close(fig8)
 
     # MPC counterpart for Sim 8
-    t8_mpc, y8_mpc, _, _ = simulate_mpc(model_nearest, y0_amb, T_target_8,
-                                        steps_override=steps_stab, dt_override=dt)
-    sample_idx = np.arange(0, len(t8_mpc), save_interval)
-    y8_mpc_sampled = y8_mpc[sample_idx]
-    t8_mpc_sampled = t8_mpc[sample_idx]
+    t8_mpc, y8_mpc, _, _ = simulate_mpc(
+        model_nearest,
+        y0_amb,
+        T_target_8,
+        steps_override=steps_stab,
+        dt_override=dt,
+        record_interval=save_interval,
+    )
 
     fig8_mpc, (ax8m_a, ax8m_b) = plt.subplots(2, 1, figsize=(8, 10))
-    ax8m_a.plot(t8_mpc_sampled, y8_mpc_sampled[:, 0], label='Corner (MPC)')
-    ax8m_a.plot(t8_mpc_sampled, y8_mpc_sampled[:, 1], label='Neighbor (MPC)')
-    ax8m_a.plot(t8_mpc_sampled, y8_mpc_sampled[:, 12], label='Center (MPC)')
+    ax8m_a.plot(t8_mpc, y8_mpc[:, 0], label='Corner (MPC)')
+    ax8m_a.plot(t8_mpc, y8_mpc[:, 1], label='Neighbor (MPC)')
+    ax8m_a.plot(t8_mpc, y8_mpc[:, 12], label='Center (MPC)')
     ax8m_a.set_title('Sim 8 (MPC): Long-Term Stability')
     ax8m_a.set_ylabel('Temperature (°C)')
     ax8m_a.set_xlabel('Time (s)')
@@ -576,9 +591,9 @@ def run_simulation():
     ax8m_a.grid(True)
     ax8m_a.set_ylim(35, 85)
 
-    T_hist_mpc = y8_mpc_sampled[:, :N]
+    T_hist_mpc = y8_mpc[:, :N]
     error_norm_mpc = np.linalg.norm(T_hist_mpc - T_target_flat, axis=1) / np.sqrt(N)
-    ax8m_b.plot(t8_mpc_sampled, error_norm_mpc, 'k-')
+    ax8m_b.plot(t8_mpc, error_norm_mpc, 'k-')
     ax8m_b.set_title('MPC RMS Temperature Error (1 Hour)')
     ax8m_b.set_ylabel('RMS Error (°C)')
     ax8m_b.set_xlabel('Time (s)')

@@ -38,7 +38,7 @@ K_NEIGHBOR = COND_NEIGHBOR / VOXEL_HEAT_CAPACITY
 # Representing local conduction/micro-convection from the hot element to the air.
 # We pick a value faster than neighbor diffusion but physically grounded.
 # Assume Conductance ~ 10x neighbor conductance (closer contact)
-COND_HEATER_AIR = COND_NEIGHBOR * 10.0
+COND_HEATER_AIR = COND_NEIGHBOR * 10.0 ## 10 is an order of magnitude stronger
 KAPPA = COND_HEATER_AIR / VOXEL_HEAT_CAPACITY # ~0.06 s^-1
 
 # 3. Environmental Loss (k^e)

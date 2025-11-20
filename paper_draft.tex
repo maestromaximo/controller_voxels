@@ -86,6 +86,15 @@ Given state vector $\vy(t)=(\ T_1 \ T_2 \ \cdots \ T_N \ E_1 \ E_2 \ \cdots \ E_
 such that the cost is strictly the sum of square errors between the actual temperatures and their corresponding setpoints. It should be noted here that the latter half of the target state vector $\vys(t)$ does not contribute to the cost.
 \todo[inline]{Pretty picture}
 
+\todo[inline]{\[
+k_{ij} =
+\begin{cases}
+k_0, & \text{if voxels $i$ and $j$ share a face}, \\[6pt]
+0,   & \text{otherwise}.
+\end{cases}
+\]
+}
+
 \section{Optimal Control Theory}
 \label{sec:optimal_control}
 
@@ -115,7 +124,7 @@ E_i^* &= c_i^*\!\left(
 u_i^* &= c_i^* \left(\sum_{j\neq i} k_{ij}(T_i^*-T_j^*) +  k_i^e(T_i^* - T_i^e)\right),
 \label{eq:ss_ui_star}
 \end{align}
-\todo[inline]{fixed environment term up to here}
+\todo[inline]{fixed environment term up to here (thank you)}
 for $i=1,\dots,N$. These depend only on the steady temperature field, $\{T_i^*\}$, and the physical couplings. Hence, we can set $T_i^*=\mathcal{T}_i$ to determine the steady state and inputs for a desired (steady) temperature field.
 
 We now introduce the \emph{state error coordinates}
@@ -359,54 +368,42 @@ predictive control designs of the following sections are compared.
 \subsection{Model Predictive Control}
 % In the context of altering the LQR, introduce the main ideas behind MPC.
 % Emphasis on finite-horizon control
-LQR controllers are ubiquitous, though a more general approach is required to see improvements in aspects of stability\todo[inline]{i mean an avoidance of transit between oscillatory states and non-oscillatory states (R problem). There's probably a better way to state this}, settle speed, tuning ambiguities, obedience of constraints, and self-correction in the presence of non-linear behaviour. Given the original problem statement, the solution to the LQR required the constraints to be reformulated into a softer form, with immediate and direct consequences on its qualitative performance. The model predictive control (MPC) technique is better-suited to this problem, handling constraints directly and recalculating the (potentially nonlinear) control law at every timestep for optimisation over a finite horizon. \todo[inline]{check: Further, the resulting control law is generally piecewise linear for linear models.} The key idea of MPC is that it, with a prediction of the system's response to a constant variation on the inputs, optimises a cost with some finite time horizon. Reframing the original problem statement such that the cost function only depends on the final state (${J=(\vy(H, \vu^*) - \vys(H))^\text{T}\mathbf{Q}(\vy(H, \vu^*) - \vys(H)}$ for some finite horizon $H$), we can guarantee that an optimal controller reaches the desired state (or as close to it as allowed) within a finite time. Due to the repeating action, the quantity $\Tilde{J}=\sum_t\sum_i(\vy(H+t, \vu^*) - \vys(H))^\text{T}\mathbf{Q}(\vy(H+t, \vu^*) - \vys(H)$, effectively the discretised version of~\ref{eqn:costfunc}, is minimised.
+LQR controllers are ubiquitous, though a more general approach is required to see improvements in aspects of local optimality, settle speed, obedience of constraints, and self-correction in the presence of non-linear behaviour. Given the original problem statement, the solution to the LQR required the constraints to be reformulated into a softer form, with immediate and direct consequences on its qualitative performance. The model predictive control (MPC) technique is better-suited to this problem, handling constraints directly and recalculating the (potentially nonlinear) control law at every timestep for optimisation over a finite horizon. Further, the resulting control law is generally piecewise linear for linear models~\cite{something I saw once}. The key idea of MPC is that it, with a prediction of the system's response to a constant variation on the inputs, optimises a cost at every timestep over some finite time horizon. This typically leads to better local optimality properties, and most notably doesn't require the inclusion of an $\mathbf{R}$ matrix to guarantee a solution.
 
-For the generalised problem statement consisting of a cost function dependent on the state vector, inputs, rates of change of either, and constraints thereon, the MPC is typically not analytically solvable. Instead, iterative approaches are used; a rich portion of the existing literature is focussed on convergence, existence and uniqueness of solutions, and stability. 
+For the generalised problem statement consisting of a cost function dependent on the state vector, inputs, rates of change of either, and constraints thereon, the MPC is typically not analytically solvable. Instead, iterative approaches are used; a rich portion of the existing literature is focussed on convergence, existence and uniqueness of solutions, stability, and computational complexity. 
 
-In the case, however, of an optimal control problem with a cost of the squared errors between a target state and the state at some time $\tau$ in the future at every timestep, under constraints on controlled variables only, there does exist an analytical solution. We will use this to build the solution to our discretised problem:
+In the case, however, of an optimal control problem with a cost of the squared errors between a target state and the state at some time $\tau$ in the future, under constraints on controlled variables only, there does exist an analytical solution. We will use this to build the solution to our discretised problem:
 
 \begin{align}
-  \text{Find control sequence}\quad &\vu[t] = \arg\min_{\vec{u'}[t]\in\Omega} J(\vec{u'}[t]),\\[4pt]
-  J(\vu[t]) &= \sum_{n=1}^{H} \Big( (\vy(n\Delta t)-\vys)^\text{T} \mathbf{Q}\, (\vy(n\Delta t)-\vys)\Big)\,,\\[6pt]
+  \text{Find control sequence}\quad &\Delta\vu[t] = \arg\min_{\Delta\vec{u'}[t]\in\Omega'} J(\vec{u'}[t]),\\[4pt]
+  J(\Delta\vu[t]) &= \sum_{n=1}^{\tau} \Big( (\vy(n\Delta t)-\vys)^\text{T} \mathbf{Q}\, (\vy(n\Delta t)-\vys)\Big)\,,\\[6pt]
   \text{subject to}\quad &\dot{\vy}(t) = \mathbf{A}\,\vy(t) + \mathbf{B}\,\vut + \mathbf{E},\\[4pt]
-  \text{and}\quad& \Omega \equiv [0, p_i]^N,
+  \text{and}\quad& \Omega' \equiv [-u_i(t), p_i-u_i(t)]^N,
 \end{align}
-with $\Delta \vec{u}[\tau]=\vec{u}[\tau+1]-\vec{u}[\tau]$ defining discrete changes in $\vu(t)$ taking place at time $\tau$.
+with $\Delta \vec{u}[t]=\vec{u}[t+1]-\vec{u}[t]$ defining discrete changes in $\vu(t)$ taking place at time $t$.
 
-Being somewhat out of scope and primarily results of linear programming, we will use the results of Ref.~\cite{gupta1997analytical} without proof: For step response matrix $\mathbf{S}$, diagonal cost matrix $\mathbf{Q}$, the optimal control move at current time $t$ is
+Being somewhat out of scope and primarily results of quadratic programming, we will use the results of Ref.~\cite{gupta1997analytical} without proof: For step response matrix $\mathbf{S}$, diagonal cost matrix $\mathbf{Q}$, the optimal control move at current time $t$ is
 \begin{align}
-    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}(\vec{e} + \vec{e}_C)
+    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}(\vec{e}_C)\label{eqn:solution_out_of_bounds}
 \end{align}
-constrained to $\Delta \vu \in [-\vu, \vec{p}-\vu]$ at every timestep, where
+constrained to $\Delta \vu \in [-\vu, \vec{p}-\vu]$ at every timestep, where $\vec{e}_C$ is the projected error for the state at the time horizon without further control moves (see Appendix~\ref{appendix:geometrical_mpc}),
 \begin{align}
     \vec{e}_C&=\mathbf{Q} (\vys - \vy_\text{traj}[t+H])
 \end{align}
-is the predicted error at the horizon, and $\vy_\text{traj}[t+H]$ is the predicted state arising at the time horizon, arising from only previous control moves: (see Appendix~\ref{appendix:trajectories}, eqn.~\ref{eqn:trajectoryprediction})
+are the predicted error at the horizon without a control move and with the control move $\Delta \vu$ respectively, and $\vy_\text{traj}[t+H]$ is the predicted state arising at the time horizon, arising from only previous control moves: (see Appendix~\ref{appendix:trajectories}, eqn.~\ref{eqn:trajectoryprediction})
 \begin{align}
-    \vy_\text{traj}[t+H]=\mathbf{A}^{-1}\mathbf{\Phi}(H) 
-        \left( \sum_{n=1}^{t/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vec{u}[n]\right) + 
-            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
-        \right)
+    \vy_\text{traj}[t+H]
+        &=\mathbf{A}^{-1} 
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \vu + \mathbf{E} \right)
         +
         \mathbf{\Phi}(H)\vec{y}(t)
 \end{align}
-This provides an optimal controller to calculate a control move $\Delta \vu$ at every timestep.\todo[inline]{Discussion on the choice of horizon - the system will always settle back to ``room temperature'', so to speak, so cost at horizon might be completely constant depending on choice... Build up a sum of these?}
-\todo[inline]{We have several options. See below:}
-\begin{itemize}
-    %\item A sum of costs at every timestep (very true to our original cost functional)
-    %\item A sum of costs at some average time constant for our system (has the drawback of performing badly for very slow responses, but very quick ones will settle at their newly perturbed temperature quickly (since we're dealing in $\Delta \vu$) and they'll be minimised well.
-    %\item ...
-    %\item Maybe this cost function actually works well, since we're working with $\Delta \vu$
-    %\item Higher horizons will essentially ignore noise more, though, since any artificial perturbations will settle.
-    \item Final conclusion: Set horizon to somewhere like our ``average'' time constant, as well as maximum. Compare numerically. Include a discussion on how the cost function should be somewhat ``close'' in some sense to the original one, or perhaps even more harsh.
-    \item Additionally, it can't hurt to see how modifying $e_C$ to include earlier-than-horizon cost can change the control behaviour. Analysis is still to be done.
-\end{itemize}
-
+This provides an optimal controller to calculate a control move $\Delta \vu$ at every timestep as in equation~\ref{eqn:solution_out_of_bounds} and $\Delta \vu$ further constrained as discussed.
 
 \section{Alejandro,}
 \begin{itemize}
     \item Please simulate MPC response with several different solutions: one with horizon of some average $\tau$ and one with horizon of $\max(\tau)$
-    \item Also another one with $e_C=\mathbf{Q}\left(\vys - \sum_m^M \vy_\text{traj}[t + n\Delta t] f[n]\right)$ for several different $M$, and $f[m]=1/M$, $f[m]=(e^{(m-M)})/\sum_i^M e^{(i-M)}$ (i.e., just some \emph{normalised} weight functions)
+    \item Also another one with $e_C=\mathbf{Q}\left(\vys - \sum_m^M \vy_\text{traj}[t + n\Delta t] f[n]\right)$ for several different $M$, and $f[m]=1/M$, $f[m]=(e^{(m/M-1)})/\sum_i^M e^{(i/M-1)}$ (i.e., just some \emph{normalized} weight functions)
 \end{itemize}
 
 
@@ -470,7 +467,7 @@ $\mathbf{E}$ is simply a vector, $\mathbf{E}=(\ k_1^e T_1^e \ \ k_2^e T_2^e \ \ 
 
 
 
-\section{Derivation of Trajectory and Step Response}\label{appendix:trajectories}
+\subsection{Derivation of Trajectory and Step Response}\label{appendix:trajectories}
 
 The system evolves according to the linear, piecewise-constant coefficient, non-homogeneous equation~\ref{eqn:evolutionlaw}. The homogeneous solution for $\dot\vec{y}=\mathbf{A} \vec{y}$ is trivially $\vec{y}_H(t)=\mathbf{\Phi}(t)\vec{y}_0$ with $\mathbf{\Phi}(t)=e^{\mathbf{A} t}$, and we will assume a particular solution of form $\vec{y}_P(t)=\mathbf{\Phi}(t) \vec{v}(t)$. Plugging this into the original evolution law, and breaking the integral involving $\vec{u}(t)$ into domains where $\vec{u}$ remains constant, yields a formula:
 \begin{align*}
@@ -517,9 +514,32 @@ Further, we can now derive the step response of the system; for input $\vu$ from
         &=\mathbf{A}^{-1} 
         \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \vu + \mathbf{E} \right)
         +
-        \mathbf{\Phi}(H)\vec{y}_0\label{eqn:stepresponse}
+        \mathbf{\Phi}(H)\vec{y}_0\\
+    (\vy_\text{step}(H) - \vy_\text{passive}(H)) &= \mathbf{A}^{-1} 
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B} \vu\label{eqn:stepresponse}
 \end{align}
-This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ at time $t=0$.
+This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ at time $t=0$. Hence, the step response matrix is
+\begin{align}
+    \mathbf{S}&=\mathcal{B}\mathbf{A}^{-1}\left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B}
+\end{align}
+with the preceding matrix (in block form) $\mathcal{B}=\begin{bmatrix}
+        \mathds{1}\\0
+    \end{bmatrix}$ added to specify that the step response matrix relates inputs ($\vu$) to temperature readings ($\vec{T}$).
+
+\subsection{Geometrical Argument for MPC}\label{appendix:geometrical_mpc}
+\begin{align}
+    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}(\vec{e}^{\,*}_C)\label{eqn:solution_out_of_bounds}
+\end{align}
+With $\vec{e}_C^{\,*}$ the minimal projected error on the appropriate boundary of the constraint box (i.e., the closest point in the \emph{error space}, defined by the coordinates of the error vector $\vec{e}_C$, that a control step can reach in the time horizon). Since the constraint on $\Delta \vu$ must satisfy:
+\begin{align}
+&\Delta \vu_\text{min}\leq{}& \Delta \vu &&\leq{} \Delta \vu_\text{max}&\\
+&-\vu \leq{}& (\mathbf{Q}\mathbf{S})^{-1} \vec{e}_C^{\,*}  &&\leq{} p_i - \vu &
+\end{align}\todo{aligning this equation :(}
+Since the goal is to move the control variable such that $\vec{e}_C$ lies within the constraint box, each element of $(\mathbf{Q}\mathbf{S})^{-1}\vec{e}_C^{\,*}$ can be chosen such that it lies on the appropriate boundary of the constraint box by moving along the coordinates in error space, directly towards $\vec{e}_C$:
+\begin{align}
+    \frac{1}{\norm{\Delta \vu}}\Delta \vu = \hat{e}_C
+\end{align}
+and every element of $\Delta \vu$ lies on a boundary of the constraint box; that is, every element $\vu_i=p_i$ or $\vu_i=0$. 
 
 \bibliographystyle{plain}
 \bibliography{references}
@@ -553,12 +573,17 @@ This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ 
 % Nov. 24-Dec. 1: Quality checks, AG,NG learn and check over MPC work.
 % Nov. 28-Dec. 1: Last edits and due dates
 
-% Nov 13 Meeting NG,AG:
+% Nov 13 Meeting NG,AG,DG:
 % Everyone's up to date on info, MPC is being written gradually.
 % Tuning was discussed - Bryson's rule might be an interesting topic for discussion of LQR
 % NG had an idea for applications: Point control - hot is a good physical problem, cold could be a good discussion for feasibility, great problem for talking about tuning and error tolerance
     % All states will be reachable since LQR can give negative inputs.
 % Timeline:
     % DG: Until Tuesday, MPC theory will be written
+    % AG: Error from tuning with Bryson's rule, simulations for all of this analysis
+    % NG: will develop cubic mesh model for k_ij, and some analysis on disturbance rejection, rise time
+    
+% Timeline (Nov 18 meeting):
+    % DG: MPC final arguments - extension to running costs? Stability
     % AG: Error from tuning with Bryson's rule, simulations for all of this analysis
     % NG: will develop cubic mesh model for k_ij, and some analysis on disturbance rejection, rise time

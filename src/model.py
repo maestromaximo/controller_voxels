@@ -277,7 +277,7 @@ class ThermalModel2D:
         if horizon not in self._step_response_cache:
             Phi = self._phi(horizon)
             identity = np.eye(self.sys.A.shape[0])
-            self._step_response_cache[horizon] = self.selector_T @ (
+            self._step_response_cache[horizon] = (
                 self._A_inv @ ((Phi - identity) @ self.sys.B)
             )
         return self._step_response_cache[horizon]
@@ -300,7 +300,7 @@ class ThermalModel2D:
         """
         Phi = self._phi(horizon)
         identity = np.eye(self.sys.A.shape[0])
-        return self.selector_T @ (self._A_inv @ ((Phi - identity) @ self.sys.B))
+        return self._A_inv @ ((Phi - identity) @ self.sys.B)
 
     def mpc_step(self,
                  y_current: np.ndarray,
@@ -311,7 +311,8 @@ class ThermalModel2D:
                  p_max: float,
                  step_response: Optional[np.ndarray] = None,
                  q_matrix: Optional[np.ndarray] = None,
-                 qs_solver: Optional[np.ndarray] = None) -> np.ndarray:
+                 qs_solver: Optional[np.ndarray] = None,
+                 return_error: bool = False):
         """
         Single MPC move following Eqs. (377)-(398):
             Δu = (Q S)^{-1} e_C
@@ -324,46 +325,25 @@ class ThermalModel2D:
             q_matrix = np.diag(q_diag)
 
         y_pred = self.predict_state(y_current, u_current, horizon)
-        temp_pred = self.selector_T @ y_pred
-        temp_target = self.selector_T @ y_target
-        e_C = q_matrix @ (temp_target - temp_pred)
+        e_C = q_matrix @ (y_target - y_pred)
 
         if qs_solver is not None:
             delta_u = qs_solver @ e_C
         else:
             QS = q_matrix @ step_response
-            try:
-                delta_u = np.linalg.solve(QS, e_C)
-            except np.linalg.LinAlgError:
+            if QS.shape[0] == QS.shape[1]:
+                try:
+                    delta_u = np.linalg.solve(QS, e_C)
+                except np.linalg.LinAlgError:
+                    delta_u = np.linalg.pinv(QS) @ e_C
+            else:
                 delta_u = np.linalg.pinv(QS) @ e_C
 
         lower_bounds = -u_current
         upper_bounds = p_max - u_current
 
-        # Geometric projection from Appendix: scale along the error-space ray
-        # so that (QS)^{-1} e_C lies exactly on the boundary of the constraint box.
-        alpha = 1.0
-        tol = 1e-9 ##tol is there for numerical stability of floating point arithmetic
-        for i in range(len(delta_u)):
-            if delta_u[i] > upper_bounds[i] + tol and delta_u[i] > 0:
-                ratio = upper_bounds[i] / delta_u[i] if delta_u[i] != 0 else 0.0
-                if ratio >= 0:
-                    alpha = min(alpha, ratio)
-            elif delta_u[i] < lower_bounds[i] - tol and delta_u[i] < 0:
-                ratio = lower_bounds[i] / delta_u[i] if delta_u[i] != 0 else 0.0
-                if ratio >= 0:
-                    alpha = min(alpha, ratio)
-
-        if alpha < 1.0 - tol:
-            e_C_star = e_C * alpha
-            if qs_solver is not None:
-                delta_u = qs_solver @ e_C_star
-            else:
-                try:
-                    delta_u = np.linalg.solve(q_matrix @ step_response, e_C_star)
-                except np.linalg.LinAlgError:
-                    delta_u = np.linalg.pinv(q_matrix @ step_response) @ e_C_star
-
         delta_u = np.clip(delta_u, lower_bounds, upper_bounds)
 
+        if return_error:
+            return delta_u, e_C
         return delta_u

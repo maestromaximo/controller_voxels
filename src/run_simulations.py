@@ -63,7 +63,9 @@ def run_simulation():
         return time, y_hist, u_hist_sat, u_hist_unsat, y_star, u_star
 
     def simulate_mpc(model, y0, T_target_map, horizon=MPC_HORIZON, q_temp_weight=1.0,
-                     steps_override=None, dt_override=None, record_interval=1):
+                     q_energy_weight=0.05, steps_override=None, dt_override=None, record_interval=1,
+                     debug: bool = False,
+                     debug_label: str = ""):
         """
         Simulate MPC closed-loop using the formulation from src.model.
         """
@@ -75,33 +77,60 @@ def run_simulation():
         local_time = np.zeros(sample_count)
 
         y_current = y0.copy()
-        # u_current = np.zeros(N)
-        u_current = np.clip(u_star.copy(), 0.0, params.P_MAX)
+        u_current = np.zeros(N)
         y_hist = np.zeros((sample_count, 2 * N))
         u_hist = np.zeros((sample_count, N))
 
-        q_diag = np.ones(N) * q_temp_weight
+        q_temp_diag = np.ones(N) * q_temp_weight
+        q_energy_diag = np.ones(N) * q_energy_weight
+        q_diag = np.concatenate([q_temp_diag, q_energy_diag])
         Q_matrix = np.diag(q_diag)
         S_matrix = model.get_step_response_matrix(horizon)
         QS = Q_matrix @ S_matrix
-        try:
-            QS_solver = np.linalg.inv(QS)
-        except np.linalg.LinAlgError:
+        if QS.shape[0] == QS.shape[1]:
+            try:
+                QS_solver = np.linalg.inv(QS)
+                print("Inverse found")
+            except np.linalg.LinAlgError:
+                print("Singular matrix, using pseudoinverse")
+                QS_solver = np.linalg.pinv(QS)
+        else:
+            print("Rectangular QS; using pseudoinverse")
             QS_solver = np.linalg.pinv(QS)
 
         sample_idx = 0
         for i in range(local_steps):
-            delta_u = model.mpc_step(
-                y_current,
-                u_current,
-                y_star,
-                horizon,
-                q_diag,
-                params.P_MAX,
-                step_response=S_matrix,
-                q_matrix=Q_matrix,
-                qs_solver=QS_solver,
-            )
+            if debug:
+                delta_u, e_C = model.mpc_step(
+                    y_current,
+                    u_current,
+                    y_star,
+                    horizon,
+                    q_diag,
+                    params.P_MAX,
+                    step_response=S_matrix,
+                    q_matrix=Q_matrix,
+                    qs_solver=QS_solver,
+                    return_error=True,
+                )
+                if i < 5:
+                    label = debug_label or "MPC"
+                    print(
+                        f"[{label}] step {i}: max|e_C|={np.abs(e_C).max():.2f}, "
+                        f"max delta={delta_u.max():.2f}, min delta={delta_u.min():.2f}"
+                    )
+            else:
+                delta_u = model.mpc_step(
+                    y_current,
+                    u_current,
+                    y_star,
+                    horizon,
+                    q_diag,
+                    params.P_MAX,
+                    step_response=S_matrix,
+                    q_matrix=Q_matrix,
+                    qs_solver=QS_solver,
+                )
             u_candidate = u_current + delta_u
             u_current = np.clip(u_candidate, 0.0, params.P_MAX)
 
@@ -479,7 +508,37 @@ def run_simulation():
     plt.close(fig7)
 
     # MPC counterpart for Sim 7
-    t7_mpc, y7_mpc, u7_mpc, _ = simulate_mpc(model_nearest, y0_amb, T_target_7)
+    t7_mpc, y7_mpc, u7_mpc, _ = simulate_mpc(
+        model_nearest,
+        y0_amb,
+        T_target_7,
+        horizon=60.0,
+        debug=True,
+        debug_label="Sim7",
+    )
+    center_idx_flat = center_flat
+    neighbor_idx_flat = neighbor_flat
+    neighbor_coords = divmod(neighbor_idx_flat, NX)
+    print(
+        f"Sim 7 LQR final temps: center={y7[-1, center_idx_flat]:.2f}°C, "
+        f"neighbor={y7[-1, neighbor_idx_flat]:.2f}°C; "
+        f"inputs center={u7_sat[-1, center_idx_flat]:.2f}W, "
+        f"neighbor={u7_sat[-1, neighbor_idx_flat]:.2f}W"
+    )
+    print(
+        f"Sim 7 MPC final temps: center={y7_mpc[-1, center_idx_flat]:.2f}°C, "
+        f"neighbor={y7_mpc[-1, neighbor_idx_flat]:.2f}°C; "
+        f"inputs center={u7_mpc[-1, center_idx_flat]:.2f}W, "
+        f"neighbor={u7_mpc[-1, neighbor_idx_flat]:.2f}W"
+    )
+    print(
+        f"Sim 7 targets: center={T_target_7[center_idx]:.1f}°C, "
+        f"neighbor={T_target_7[neighbor_coords]:.1f}°C"
+    )
+    print(
+        f"Sim 7 MPC peak inputs: center={u7_mpc[:, center_idx_flat].max():.2f}W, "
+        f"neighbor={u7_mpc[:, neighbor_idx_flat].max():.2f}W"
+    )
     fig7_mpc, (ax7m_a, ax7m_b) = plt.subplots(2, 1, figsize=(8, 10))
     ax7m_a.plot(t7_mpc, y7_mpc[:, center_flat], label='Center Voxel (MPC)')
     ax7m_a.plot(t7_mpc, y7_mpc[:, neighbor_flat], label='Neighbor Voxel (MPC)')

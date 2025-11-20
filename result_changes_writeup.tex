@@ -1,0 +1,71 @@
+\section{Closed-Form Saturating MPC}\label{sec:closed_form_mpc}
+
+We consider the linear thermal plant
+\begin{align}
+    \dot{\vy}(t) &= \mathbf{A}\,\vy(t) + \mathbf{B}\, \vu(t) + \mathbf{E}, &
+    \vy(t) &=
+    \begin{bmatrix}
+        \mathbf{T}(t)\\
+        \mathbf{E}_h(t)
+    \end{bmatrix}\in\mathbb{R}^{2N},
+\end{align}
+whose matrices are obtained from the block construction in Appendix~\ref{appendix:ABform}.  For a desired steady state $(\vy^*, \vu^*)$, the current MPC implementation computes a single move $\Delta\vu = \vu(t{+}1)-\vu(t)$ by analytically eliminating the state trajectory over a continuous prediction window of length $H$ seconds.
+
+\paragraph{Step-response operator.}  The matrix exponential $\mathbf{\Phi}(H)=e^{\mathbf{A}H}$ is used to form the step-response matrix
+\begin{equation}
+    \mathbf{S}(H) = \mathbf{A}^{-1}\!\left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B},
+\end{equation}
+which maps constant heater inputs over the horizon to the \emph{full} state deviation $(\delta\mathbf{T},\,\delta\mathbf{E}_h)$.  $\mathbf{S}(H)\in\mathbb{R}^{2N\times N}$ depends only on the plant and the horizon; it is cached for reuse.
+
+\paragraph{Predicted state.}  For the latest measurements $\vy(t)$ and applied inputs $\vu(t)$ (post-clipping), the future state one horizon ahead is obtained from
+\begin{equation}
+    \vy_{\text{traj}}[t+H] = \mathbf{A}^{-1}\!\left(\mathbf{\Phi}(H)-\mathds{1}\right)\!(\mathbf{B}\vu(t)+\mathbf{E})
+    + \mathbf{\Phi}(H)\,\vy(t).
+\end{equation}
+\paragraph{Projected error and analytic move.}  The quadratic weight now follows the block structure advocated in the paper,
+\begin{equation}
+    \mathbf{Q} =
+    \begin{bmatrix}
+        \mathrm{diag}(w_{T,1},\dots,w_{T,N}) & \mathbf{0} \\
+        \mathbf{0} & w_E\,\mathds{1}_N
+    \end{bmatrix}
+\end{equation}
+with $w_{T,i}>0$ and $w_E \ge 0$ tuned from Bryson's rule.  The projected error at the horizon therefore penalizes both temperature and heater-energy deviations,
+\begin{equation}
+    \vec{e}_C = \mathbf{Q}\left(\vy^* - \vy_{\text{traj}}[t+H]\right)\in\mathbb{R}^{2N}.
+\end{equation}
+Because $\mathbf{S}(H)$ is rectangular, the weighted step-response matrix
+\begin{equation}
+    \mathbf{Q}\mathbf{S}(H)\in\mathbb{R}^{2N\times N}
+\end{equation}
+is solved in the least-squares sense via the Moore--Penrose pseudoinverse:
+\begin{equation}
+    \Delta\vu = \left(\mathbf{Q}\mathbf{S}(H)\right)^{\!\dagger} \vec{e}_C.
+\end{equation}
+
+\paragraph{Projected error and analytic move.}  The cost weight is purely quadratic in temperature errors,
+\begin{equation}
+    \mathbf{Q} = \mathrm{diag}(w_1,\dots,w_N), \qquad w_i > 0,
+\end{equation}
+so the projected error at the horizon is
+\begin{equation}
+    \vec{e}_C = \mathbf{Q}\left(\mathbf{T}^* - \mathbf{T}_{\text{traj}}[t+H]\right).
+\end{equation}
+The command applied to the heaters is
+\begin{equation}
+    \vu(t{+}1) = \mathrm{clip}\!\left(\vu(t) + \Delta\vu,\;\mathbf{0},\;\mathbf{p}_{\max}\right),
+\end{equation}
+where the clipping enforces actuator limits elementwise.  Because the solve is carried out in deviation coordinates but evaluated about the true physical inputs, the controller immediately exploits positive authority (e.g.\ saturating a neighbor heater at the 5~W cap) while respecting the unidirectional nature of the actuators.
+
+\section{Resolution of the Earlier Failure}\label{sec:changes}
+
+The draft manuscript proposed an additional ``geometric'' step after computing $\Delta\vu$, wherein the vector $(\mathbf{Q}\mathbf{S})^{\dagger}\vec{e}_C$ was scaled along its ray until \emph{every} heater landed exactly on a box constraint.  In scenarios such as the ``cold trap'' test (center voxel commanded to $20^\circ$C while its neighbors target $100^\circ$C), the optimal solution demands negative power at the center.  The geometric projection therefore reduced the entire vector to zero, because the ray was forced to intersect the nonnegative orthant, annihilating the positive entries that should have heated the surrounding voxels.  Consequently, the neighbor heaters never left their steady-state values, and the MPC response was indistinguishable from open-loop drift.
+
+The current implementation removes that ray-scaling step, retains the full-state weighting $\mathbf{Q}$, and simply clips each channel after evaluating the pseudoinverse solution.  As a result:
+\begin{itemize}
+    \item Every heater with available positive authority can now apply the move prescribed by $(\mathbf{Q}\mathbf{S})^{\dagger}\vec{e}_C$, saturating only if the command exceeds $p_{\max}$.
+    \item Heaters that require cooling simply get clipped to zero without suppressing the rest of the vector, so infeasible channels (e.g.\ the center voxel) decouple from feasible ones (the neighbors).
+    \item The controller remains analytic and lightweight: there is no iterative search or additional constraint geometry, just the matrix solve already described in the paper.
+\end{itemize}
+With this change, Sim~7 immediately sends the neighbor heater to the 5~W ceiling, compensates for conductive losses, and settles near the desired $100^\circ$C level, while the center heater stays at $0$~W because active cooling is unavailable.  The contrast with the earlier approach demonstrates that the core equations were sound; the only obstruction was the overly restrictive projection rule.
+

@@ -520,11 +520,8 @@ Further, we can now derive the step response of the system; for input $\vu$ from
 \end{align}
 This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ at time $t=0$. Hence, the step response matrix is
 \begin{align}
-    \mathbf{S}&=\mathcal{B}\mathbf{A}^{-1}\left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B}
+    \mathbf{S}&=\mathbf{A}^{-1}\left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B}.
 \end{align}
-with the preceding matrix (in block form) $\mathcal{B}=\begin{bmatrix}
-        \mathds{1}\\0
-    \end{bmatrix}$ added to specify that the step response matrix relates inputs ($\vu$) to temperature readings ($\vec{T}$).
 
 \subsection{Geometrical Argument for MPC}\label{appendix:geometrical_mpc}
 \begin{align}

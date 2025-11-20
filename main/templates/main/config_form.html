@@ -37,6 +37,10 @@
             <div class="mb-3">{{ form.q_energy_weight.label_tag }} {{ form.q_energy_weight }}</div>
             <div class="mb-3">{{ form.r_weight.label_tag }} {{ form.r_weight }}</div>
             <div class="mb-3">{{ form.p_max.label_tag }} {{ form.p_max }}</div>
+            <div class="mb-3">{{ form.bryson_temp_max.label_tag }} {{ form.bryson_temp_max }}</div>
+            <button type="submit" name="apply_bryson" value="1" class="btn btn-outline-secondary btn-sm">
+                Apply Bryson's Rule
+            </button>
         </div>
     </div>
 
@@ -56,6 +60,33 @@
             
             <!-- Hidden field to store the matrix -->
             {{ form.target_temp_matrix }}
+        </div>
+    </div>
+
+    <div class="card mt-4" id="optuna-section">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Tree-structured Parzen Estimator (Optuna)</span>
+            <small class="text-muted">Searches for Q/R weights in ≤3 minutes</small>
+        </div>
+        <div class="card-body">
+            <p class="mb-3">
+                Launch Optuna's TPE sampler to automatically tune the LQR weights. This run is asynchronous,
+                capped at 3 minutes, and reports live progress below.
+            </p>
+            <button type="button" class="btn btn-warning" id="optuna-start-btn">
+                Start TPE Optimization
+            </button>
+            <div id="optuna-status" class="mt-3 d-none">
+                <div class="progress">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="optuna-progress-bar" role="progressbar" style="width: 0%">0%</div>
+                </div>
+                <pre id="optuna-log" class="bg-dark text-light p-2 mt-3" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem;"></pre>
+                <div id="optuna-best" class="mt-3 d-none">
+                    <p class="mb-2">Best score: <span id="optuna-best-score">--</span></p>
+                    <button type="button" class="btn btn-success" id="optuna-apply-btn" disabled>Apply Best Weights</button>
+                </div>
+            </div>
+            <div id="optuna-error" class="text-danger mt-2 d-none"></div>
         </div>
     </div>
 
@@ -182,6 +213,138 @@
     
     // Initialize
     updateGrid();
+
+    // Optuna Optimization UI
+    const optunaStartBtn = document.getElementById('optuna-start-btn');
+    const optunaStatusBox = document.getElementById('optuna-status');
+    const optunaProgressBar = document.getElementById('optuna-progress-bar');
+    const optunaLog = document.getElementById('optuna-log');
+    const optunaBestBox = document.getElementById('optuna-best');
+    const optunaBestScore = document.getElementById('optuna-best-score');
+    const optunaApplyBtn = document.getElementById('optuna-apply-btn');
+    const optunaError = document.getElementById('optuna-error');
+    const OPTUNA_START_URL = "{% url 'optimize_start' %}";
+    const OPTUNA_STATUS_URL = "{% url 'optimize_status' %}";
+    let optunaJobId = null;
+    let optunaPollHandle = null;
+    let optunaBestParams = null;
+
+    function setOptunaProgress(percent) {
+        const pct = Math.max(0, Math.min(100, percent || 0));
+        optunaProgressBar.style.width = pct + '%';
+        optunaProgressBar.textContent = pct + '%';
+    }
+
+    function resetOptunaUI() {
+        optunaError.classList.add('d-none');
+        optunaBestBox.classList.add('d-none');
+        optunaApplyBtn.disabled = true;
+        optunaBestParams = null;
+        optunaLog.textContent = '';
+        setOptunaProgress(0);
+        optunaProgressBar.classList.remove('bg-success');
+        optunaProgressBar.classList.add('progress-bar-animated');
+    }
+
+    function stopOptunaPolling() {
+        if (optunaPollHandle) {
+            clearInterval(optunaPollHandle);
+            optunaPollHandle = null;
+        }
+        optunaJobId = null;
+        optunaStartBtn.disabled = false;
+        optunaProgressBar.classList.remove('progress-bar-animated');
+    }
+
+    function handleOptunaError(message) {
+        stopOptunaPolling();
+        optunaError.textContent = typeof message === 'string' ? message : JSON.stringify(message);
+        optunaError.classList.remove('d-none');
+    }
+
+    function pollOptunaStatus() {
+        if (!optunaJobId) {
+            return;
+        }
+        fetch(`${OPTUNA_STATUS_URL}?job_id=${optunaJobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    handleOptunaError(data.error);
+                    return;
+                }
+                optunaStatusBox.classList.remove('d-none');
+                setOptunaProgress(data.percent || 0);
+                if (data.progress_log !== undefined) {
+                    optunaLog.textContent = data.progress_log;
+                    optunaLog.scrollTop = optunaLog.scrollHeight;
+                }
+                if (data.best_params) {
+                    optunaBestParams = data.best_params;
+                    const scoreValue = data.best_params.score ?? data.best_score;
+                    optunaBestScore.textContent = scoreValue !== null && scoreValue !== undefined ? Number(scoreValue).toFixed(4) : '--';
+                    optunaBestBox.classList.remove('d-none');
+                    optunaApplyBtn.disabled = false;
+                }
+                if (data.status === 'completed') {
+                    stopOptunaPolling();
+                    optunaProgressBar.classList.add('bg-success');
+                    optunaError.classList.add('d-none');
+                } else if (data.status === 'failed') {
+                    stopOptunaPolling();
+                    handleOptunaError('Optimization ended without improvement.');
+                }
+            })
+            .catch(() => {
+                handleOptunaError('Unable to fetch optimization status.');
+            });
+    }
+
+    function startOptunaOptimization() {
+        resetOptunaUI();
+        optunaStatusBox.classList.remove('d-none');
+        optunaStartBtn.disabled = true;
+        updateMatrixJson();
+        const formEl = document.getElementById('simForm');
+        const formData = new FormData(formEl);
+        fetch(OPTUNA_START_URL, {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.job_id) {
+                    optunaJobId = data.job_id;
+                    optunaLog.textContent = 'Starting optimization...\n';
+                    optunaPollHandle = setInterval(pollOptunaStatus, 2000);
+                    pollOptunaStatus();
+                } else if (data.error) {
+                    handleOptunaError(JSON.stringify(data.error));
+                } else {
+                    handleOptunaError('Unexpected response from optimizer.');
+                }
+            })
+            .catch(() => handleOptunaError('Failed to start optimization.'));
+    }
+
+    function applyOptunaBest() {
+        if (!optunaBestParams) {
+            return;
+        }
+        const qTempInput = document.getElementById('id_q_temp_weight');
+        const qEnergyInput = document.getElementById('id_q_energy_weight');
+        const rInput = document.getElementById('id_r_weight');
+        if (qTempInput) qTempInput.value = Number(optunaBestParams.q_temp_weight);
+        if (qEnergyInput) qEnergyInput.value = Number(optunaBestParams.q_energy_weight);
+        if (rInput) rInput.value = Number(optunaBestParams.r_weight);
+    }
+
+    if (optunaStartBtn) {
+        optunaStartBtn.addEventListener('click', startOptunaOptimization);
+    }
+    if (optunaApplyBtn) {
+        optunaApplyBtn.addEventListener('click', applyOptunaBest);
+    }
 </script>
 {% endblock %}
 

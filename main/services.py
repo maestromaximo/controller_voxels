@@ -4,9 +4,19 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import os
+import time
+import math
+import json
+import optuna
 from django.conf import settings
+from django.utils import timezone
+from django.db.models import Value
+from django.db.models.functions import Concat
 from src.model import ThermalModel2D
-from .models import SimulationConfig, SimulationRun
+import src.parameters as params
+from .models import SimulationConfig, SimulationRun, OptimizationJob
+
+OPTIMIZATION_TIME_LIMIT = 180.0  # seconds
 
 def run_simulation_service(run_id, generate_animation=False):
     run = SimulationRun.objects.get(id=run_id)
@@ -209,4 +219,179 @@ def run_simulation_service(run_id, generate_animation=False):
     run.rms_error = np.sqrt(np.mean(error**2))
     
     run.save()
+
+
+def _append_progress(job_id, message):
+    OptimizationJob.objects.filter(id=job_id).update(
+        progress_log=Concat('progress_log', Value(message + '\n'))
+    )
+
+
+def _ensure_matrix(matrix_value):
+    if isinstance(matrix_value, str):
+        if not matrix_value:
+            return []
+        try:
+            return json.loads(matrix_value)
+        except json.JSONDecodeError:
+            return []
+    return matrix_value
+
+
+def simulate_cost(config_snapshot, q_temp_weight, q_energy_weight, r_weight):
+    try:
+        nx = int(config_snapshot.get('nx', 5))
+        ny = int(config_snapshot.get('ny', 5))
+        coupling_mode = config_snapshot.get('coupling_mode', 'nearest')
+        voxel_size = float(config_snapshot.get('voxel_size', params.VOXEL_SIDE_LENGTH))
+        density = float(config_snapshot.get('density', params.DENSITY_AIR))
+        specific_heat = float(config_snapshot.get('specific_heat', params.SPECIFIC_HEAT_AIR))
+        thermal_conductivity = float(config_snapshot.get('thermal_conductivity', params.THERMAL_CONDUCTIVITY_AIR))
+        heater_heat_capacity = float(config_snapshot.get('heater_heat_capacity', params.HEATER_HEAT_CAPACITY))
+        temp_ambient = float(config_snapshot.get('temp_ambient', params.TEMP_AMBIENT))
+        dt = max(0.02, float(config_snapshot.get('dt', 0.05)))
+        duration = float(config_snapshot.get('duration', 600.0))
+        eval_duration = min(duration, 300.0)
+        steps = max(5, int(eval_duration / dt))
+        p_max = float(config_snapshot.get('p_max', params.P_MAX))
+
+        voxel_volume = voxel_size ** 3
+        voxel_mass = density * voxel_volume
+        c_v = voxel_mass * specific_heat
+        cond_neighbor = thermal_conductivity * (voxel_size**2) / voxel_size
+        k_neighbor = cond_neighbor / c_v
+        cond_heater = cond_neighbor * 10.0
+        kappa = cond_heater / c_v
+        k_env = k_neighbor
+
+        model_config = {
+            'k_neighbor': k_neighbor,
+            'kappa': kappa,
+            'k_env': k_env,
+            'c_v': c_v,
+            'c_h': heater_heat_capacity,
+            'temp_ambient': temp_ambient,
+            'voxel_side_length': voxel_size,
+        }
+
+        model = ThermalModel2D(nx, ny, coupling_mode=coupling_mode, config=model_config)
+
+        try:
+            K, _ = model.design_lqr(q_temp_weight, q_energy_weight, r_weight)
+        except Exception:
+            return float('inf')
+
+        ambient_map = np.ones((ny, nx)) * temp_ambient
+        y0_amb, _ = model.get_steady_state(ambient_map)
+        y_current = y0_amb.copy()
+
+        target_matrix = _ensure_matrix(config_snapshot.get('target_temp_matrix'))
+        if not target_matrix:
+            T_target = ambient_map
+        else:
+            T_target = np.array(target_matrix, dtype=float)
+            if T_target.shape != (ny, nx):
+                T_target = ambient_map
+
+        y_star, u_star = model.get_steady_state(T_target)
+        N = nx * ny
+        y_hist = np.zeros((steps, 2 * N))
+
+        for i in range(steps):
+            y_tilde = y_current - y_star
+            delta_u = -K @ y_tilde
+            u_unsat = u_star + delta_u
+            u_applied = np.clip(u_unsat, 0.0, p_max)
+
+            y_hist[i] = y_current
+            dy = model.sys.A @ y_current + model.sys.B @ u_applied + model.sys.E
+            y_current += dy * dt
+
+        T_history = y_hist[:, :N]
+        target_flat = T_target.flatten()
+        error = T_history - target_flat
+
+        tail_len = max(steps // 5, 1)
+        tail_error = error[-tail_len:]
+        rms_error = np.sqrt(np.mean(np.square(tail_error)))
+
+        # Tiny L2-style regularizer keeps the search from driving weights
+        # arbitrarily close to zero when multiple candidates yield identical
+        # RMS error. It is negligible compared to the temperature error term,
+        # but breaks ties in favor of more balanced gains.
+        regularizer = 1e-6 * (q_temp_weight + q_energy_weight + r_weight)
+        score = float(rms_error + regularizer)
+        if not math.isfinite(score):
+            return float('inf')
+        return score
+    except Exception:
+        return float('inf')
+
+
+def run_optuna_job(job_id):
+    try:
+        job = OptimizationJob.objects.get(id=job_id)
+    except OptimizationJob.DoesNotExist:
+        return
+
+    job.status = 'running'
+    job.started_at = timezone.now()
+    job.progress_log = 'Initializing Tree-structured Parzen Estimator (Optuna)...\n'
+    job.save(update_fields=['status', 'started_at', 'progress_log'])
+
+    snapshot = job.config_snapshot
+    sampler = optuna.samplers.TPESampler()
+    study = optuna.create_study(direction='minimize', sampler=sampler)
+    start_time = time.time()
+    best_score = math.inf
+
+    def objective(trial):
+        nonlocal best_score
+        elapsed = time.time() - start_time
+        if elapsed >= OPTIMIZATION_TIME_LIMIT:
+            raise optuna.exceptions.TrialPruned()
+
+        q_t = trial.suggest_float('q_temp_weight', 1e-3, 1e3, log=True)
+        q_e = trial.suggest_float('q_energy_weight', 1e-4, 10.0, log=True)
+        r = trial.suggest_float('r_weight', 1e-4, 1.0, log=True)
+
+        score = simulate_cost(snapshot, q_t, q_e, r)
+        _append_progress(job_id, f"Trial {trial.number}: cost={score:.4f}, qT={q_t:.4f}, qE={q_e:.4f}, R={r:.5f}")
+
+        if score < best_score:
+            best_score = score
+            OptimizationJob.objects.filter(id=job_id).update(
+                best_q_temp=q_t,
+                best_q_energy=q_e,
+                best_r=r,
+                best_score=score
+            )
+        return score
+
+    try:
+        study.optimize(
+            objective,
+            timeout=OPTIMIZATION_TIME_LIMIT,
+            n_trials=100,
+            catch=(optuna.exceptions.TrialPruned,)
+        )
+        job.refresh_from_db()
+        if job.best_q_temp is not None:
+            _append_progress(job_id, "Optimization completed successfully.")
+            OptimizationJob.objects.filter(id=job_id).update(
+                status='completed',
+                completed_at=timezone.now()
+            )
+        else:
+            _append_progress(job_id, "Optimization ended without finding a better controller.")
+            OptimizationJob.objects.filter(id=job_id).update(
+                status='failed',
+                completed_at=timezone.now()
+            )
+    except Exception as exc:
+        _append_progress(job_id, f"Optimization failed: {exc}")
+        OptimizationJob.objects.filter(id=job_id).update(
+            status='failed',
+            completed_at=timezone.now()
+        )
 

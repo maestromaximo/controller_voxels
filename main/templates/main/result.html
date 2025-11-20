@@ -65,7 +65,15 @@
                             {{ recompute_form.dt.label_tag }} {{ recompute_form.dt }}
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary mt-3">Recompute</button>
+                    <div class="mt-3">
+                        <button type="submit" name="apply_bryson" value="1" class="btn btn-outline-secondary me-2">
+                            Set via Bryson's Rule
+                        </button>
+                        <button type="submit" class="btn btn-primary">Recompute</button>
+                    </div>
+                    <small class="text-muted d-block mt-2">
+                        Bryson ΔT max: {{ run.config.bryson_temp_max }} °C (E<sub>max</sub> = {{ run.config.heater_heat_capacity|floatformat:2 }} × ΔT)
+                    </small>
                 </form>
             </div>
         </div>

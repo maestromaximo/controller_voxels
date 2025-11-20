@@ -29,6 +29,7 @@ class SimulationConfig(models.Model):
     q_energy_weight = models.FloatField(default=0.1, help_text="Weight for Energy Error")
     r_weight = models.FloatField(default=0.001, help_text="Weight for Control Input")
     p_max = models.FloatField(default=5.0, help_text="Max Power (W)")
+    bryson_temp_max = models.FloatField(default=5.0, help_text="Max temperature deviation for Bryson's rule (°C)")
 
     # Simulation Settings
     duration = models.FloatField(default=1500.0, help_text="Simulation Duration (s)")
@@ -67,3 +68,25 @@ class SimulationRun(models.Model):
     
     def __str__(self):
         return f"Run {self.id} - {self.status}"
+
+class OptimizationJob(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    progress_log = models.TextField(blank=True, default='')
+    best_q_temp = models.FloatField(null=True, blank=True)
+    best_q_energy = models.FloatField(null=True, blank=True)
+    best_r = models.FloatField(null=True, blank=True)
+    best_score = models.FloatField(null=True, blank=True)
+    config_snapshot = models.JSONField()
+
+    def __str__(self):
+        return f"OptJob {self.id} - {self.status}"

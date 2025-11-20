@@ -212,3 +212,45 @@ class ThermalModel2D:
         K = R_inv @ self.sys.B.T @ P
         
         return K, P
+
+    @staticmethod
+    def bryson_weights(temp_max, energy_max=None, power_max=1.0):
+        """
+        Compute diagonal weight entries using Bryson's rule.
+
+        Parameters
+        ----------
+        temp_max : float or array-like
+            Maximum allowable temperature deviation(s) in degrees.
+        energy_max : float or array-like, optional
+            Maximum allowable heater-energy deviation(s). If None, defaults
+            to temp_max (assuming unity heat capacity).
+        power_max : float or array-like
+            Maximum allowable control effort(s), typically heater power.
+
+        Returns
+        -------
+        tuple
+            (Q_T_weight, Q_E_weight, R_weight) where each entry is the
+            reciprocal squared magnitude of the corresponding maxima.
+        """
+        temp_max_arr = np.asarray(temp_max, dtype=float)
+        if energy_max is None:
+            energy_max_arr = temp_max_arr.copy()
+        else:
+            energy_max_arr = np.asarray(energy_max, dtype=float)
+        power_max_arr = np.asarray(power_max, dtype=float)
+
+        q_temp = 1.0 / np.square(temp_max_arr)
+        q_energy = 1.0 / np.square(energy_max_arr)
+        r_weight = 1.0 / np.square(power_max_arr)
+
+        # Convert singletons back to scalars for convenience
+        if q_temp.shape == ():
+            q_temp = float(q_temp)
+        if q_energy.shape == ():
+            q_energy = float(q_energy)
+        if r_weight.shape == ():
+            r_weight = float(r_weight)
+
+        return q_temp, q_energy, r_weight

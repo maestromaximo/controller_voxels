@@ -3,8 +3,47 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import os
 import math
+from typing import Callable, Optional
 from src.model import ThermalModel2D
 import src.parameters as params
+
+DEFAULT_MPC_HORIZON = 1.0
+MPC_HORIZON_AVG = 5.0
+MPC_HORIZON_MAX = 60.0
+ALEJANDRO_M_VALUES = [3, 5, 10]
+DAVIS_HORIZON_VALUES = [5.0, 25.0, 125.0]
+DAVIS_ZOOM_WINDOW = 200.0
+
+PredictionOverrideFn = Callable[[ThermalModel2D, np.ndarray, np.ndarray, float, float], np.ndarray]
+
+
+def _uniform_weights(count: int) -> np.ndarray:
+    weights = np.ones(count, dtype=float)
+    return weights / weights.sum()
+
+
+def _exp_weights(count: int) -> np.ndarray:
+    idx = np.arange(1, count + 1, dtype=float)
+    raw = np.exp((idx / count) - 1.0)
+    return raw / raw.sum()
+
+
+def make_weighted_prediction_fn(count: int,
+                                weight_builder: Callable[[int], np.ndarray]) -> PredictionOverrideFn:
+    weights = weight_builder(count)
+
+    def _predict(model: ThermalModel2D,
+                 y_current: np.ndarray,
+                 u_current: np.ndarray,
+                 horizon: float,
+                 dt: float) -> np.ndarray:
+        lookahead_times = np.linspace(dt, horizon, count)
+        weighted_prediction = np.zeros_like(y_current)
+        for weight, lookahead in zip(weights, lookahead_times):
+            weighted_prediction += weight * model.predict_state(y_current, u_current, lookahead)
+        return weighted_prediction
+
+    return _predict
 
 def run_simulation():
     # Create output directory
@@ -21,7 +60,7 @@ def run_simulation():
     Q_T_W, Q_E_W, R_W = 100.0, 0.1, 0.001
     K_nearest, _ = model_nearest.design_lqr(Q_T_W, Q_E_W, R_W)
     K_distance, _ = model_distance.design_lqr(Q_T_W, Q_E_W, R_W)
-    MPC_HORIZON = 1
+    MPC_HORIZON = DEFAULT_MPC_HORIZON
     
     # Common Simulation Settings
     dt = 0.05 
@@ -62,10 +101,19 @@ def run_simulation():
             
         return time, y_hist, u_hist_sat, u_hist_unsat, y_star, u_star
 
-    def simulate_mpc(model, y0, T_target_map, horizon=MPC_HORIZON, q_temp_weight=1.0,
-                     q_energy_weight=0.05, steps_override=None, dt_override=None, record_interval=1,
+    def simulate_mpc(model,
+                     y0,
+                     T_target_map,
+                     horizon=MPC_HORIZON,
+                     q_temp_weight=1.0,
+                     q_energy_weight=0.05,
+                     steps_override=None,
+                     dt_override=None,
+                     record_interval=1,
                      debug: bool = False,
-                     debug_label: str = ""):
+                     debug_label: str = "",
+                     prediction_override_fn: Optional[PredictionOverrideFn] = None,
+                     capture_diagnostics: bool = False):
         """
         Simulate MPC closed-loop using the formulation from src.model.
         """
@@ -80,6 +128,12 @@ def run_simulation():
         u_current = np.zeros(N)
         y_hist = np.zeros((sample_count, 2 * N))
         u_hist = np.zeros((sample_count, N))
+        if capture_diagnostics:
+            eC_hist = np.zeros((sample_count, 2 * N))
+            delta_hist = np.zeros((sample_count, N))
+        else:
+            eC_hist = None
+            delta_hist = None
 
         q_temp_diag = np.ones(N) * q_temp_weight
         q_energy_diag = np.ones(N) * q_energy_weight
@@ -99,21 +153,34 @@ def run_simulation():
             QS_solver = np.linalg.pinv(QS)
 
         sample_idx = 0
+        request_error = debug or capture_diagnostics
         for i in range(local_steps):
-            if debug:
+            if prediction_override_fn is not None:
+                y_pred_override = prediction_override_fn(
+                    model=model,
+                    y_current=y_current,
+                    u_current=u_current,
+                    horizon=horizon,
+                    dt=local_dt,
+                )
+            else:
+                y_pred_override = None
+            if request_error:
                 delta_u, e_C = model.mpc_step(
                     y_current,
                     u_current,
                     y_star,
-                    horizon,
-                    q_diag,
-                    params.P_MAX,
+                    horizon=horizon,
+                    q_diag=q_diag,
+                    p_max=params.P_MAX,
                     step_response=S_matrix,
                     q_matrix=Q_matrix,
                     qs_solver=QS_solver,
+                    y_pred_override=y_pred_override,
+                    u_target=u_star,
                     return_error=True,
                 )
-                if i < 5:
+                if debug and i < 5:
                     label = debug_label or "MPC"
                     print(
                         f"[{label}] step {i}: max|e_C|={np.abs(e_C).max():.2f}, "
@@ -124,20 +191,27 @@ def run_simulation():
                     y_current,
                     u_current,
                     y_star,
-                    horizon,
-                    q_diag,
-                    params.P_MAX,
+                    horizon=horizon,
+                    q_diag=q_diag,
+                    p_max=params.P_MAX,
                     step_response=S_matrix,
                     q_matrix=Q_matrix,
                     qs_solver=QS_solver,
+                    y_pred_override=y_pred_override,
+                    u_target=u_star,
                 )
+                e_C = None
             u_candidate = u_current + delta_u
-            u_current = np.clip(u_candidate, 0.0, params.P_MAX)
+            # u_current = np.clip(u_candidate, 0.0, params.P_MAX)
+            u_current = u_candidate
 
             if i % sample_interval == 0 and sample_idx < sample_count:
                 y_hist[sample_idx] = y_current
                 u_hist[sample_idx] = u_current
                 local_time[sample_idx] = i * local_dt
+                if capture_diagnostics and e_C is not None:
+                    eC_hist[sample_idx] = e_C
+                    delta_hist[sample_idx] = delta_u
                 sample_idx += 1
 
             dy = model.sys.A @ y_current + model.sys.B @ u_current + model.sys.E
@@ -146,6 +220,14 @@ def run_simulation():
         y_hist[-1] = y_current
         u_hist[-1] = u_current
         local_time[-1] = (local_steps - 1) * local_dt
+
+        if capture_diagnostics:
+            diag_data = {
+                "time": local_time.copy(),
+                "error": eC_hist,
+                "delta": delta_hist,
+            }
+            return local_time, y_hist, u_hist, y_star, diag_data
 
         return local_time, y_hist, u_hist, y_star
 
@@ -748,6 +830,164 @@ def run_simulation():
     fig5_mpc.tight_layout()
     fig5_mpc.savefig('figures_writting/sim_outputs/sim5_comparison_gradient_mpc.png')
     plt.close(fig5_mpc)
+
+    # --- Alejandro-requested MPC variants ---
+    print("Running Alejandro-requested MPC studies...")
+    horizon_configs = [
+        ("avg", MPC_HORIZON_AVG),
+        ("max", MPC_HORIZON_MAX),
+    ]
+    horizon_results = []
+    for label, horizon_value in horizon_configs:
+        t_h, y_h, u_h, _ = simulate_mpc(
+            model_nearest,
+            y0_amb,
+            T_target_1,
+            horizon=horizon_value,
+            record_interval=1,
+        )
+        horizon_results.append((label, horizon_value, t_h, y_h, u_h))
+
+    figH, (axH_temp, axH_power) = plt.subplots(2, 1, figsize=(8, 10))
+    for label, horizon_value, t_h, y_h, u_h in horizon_results:
+        legend_label = f"{label.title()} Horizon (H={horizon_value:.1f}s)"
+        axH_temp.plot(t_h, y_h[:, center_flat], label=legend_label)
+        axH_power.plot(t_h, u_h[:, center_flat], label=legend_label)
+    axH_temp.set_title('MPC Center Voxel Temperature vs. Horizon Choice')
+    axH_temp.set_ylabel('Temperature (°C)')
+    axH_temp.set_xlabel('Time (s)')
+    axH_temp.grid(True)
+    axH_temp.legend()
+
+    axH_power.set_title('MPC Center Heater Power vs. Horizon Choice')
+    axH_power.set_ylabel('Power (W)')
+    axH_power.set_xlabel('Time (s)')
+    axH_power.grid(True)
+    axH_power.legend()
+    figH.tight_layout()
+    figH.savefig('figures_writting/sim_outputs/sim_alejandro_horizon_compare_mpc.png')
+    plt.close(figH)
+
+    print("Running Davis-requested MPC horizon sweep (distance coupling)...")
+    davis_results = []
+    for horizon_value in DAVIS_HORIZON_VALUES:
+        sim_result = simulate_mpc(
+            model_distance,
+            y0_amb,
+            T_target_1,
+            horizon=horizon_value,
+            record_interval=1,
+            capture_diagnostics=True,
+        )
+        t_d, y_d, u_d, _, diag_data = sim_result
+        davis_results.append((horizon_value, t_d, y_d, u_d, diag_data))
+
+    figD, (axD_full, axD_zoom) = plt.subplots(2, 1, figsize=(9, 10), sharey=True)
+    for horizon_value, t_d, y_d, _, _ in davis_results:
+        label = f"H={horizon_value:.0f}s"
+        axD_full.plot(t_d, y_d[:, center_flat], label=label)
+
+    axD_full.axhline(100.0, color='k', linestyle=':', alpha=0.6, label='Target 100°C')
+    axD_full.set_title('Davis Request: MPC Center Temperature vs Horizon')
+    axD_full.set_ylabel('Temperature (°C)')
+    axD_full.set_xlabel('Time (s)')
+    axD_full.grid(True)
+    axD_full.legend()
+
+    for horizon_value, t_d, y_d, _, _ in davis_results:
+        label = f"H={horizon_value:.0f}s"
+        zoom_start = max(t_d[0], t_d[-1] - DAVIS_ZOOM_WINDOW)
+        mask = t_d >= zoom_start
+        axD_zoom.plot(t_d[mask], y_d[mask, center_flat], label=label)
+
+    axD_zoom.axhline(100.0, color='k', linestyle=':', alpha=0.6)
+    axD_zoom.set_title(f'Zoom on Final {DAVIS_ZOOM_WINDOW:.0f} s')
+    axD_zoom.set_ylabel('Temperature (°C)')
+    axD_zoom.set_xlabel('Time (s)')
+    axD_zoom.grid(True)
+    axD_zoom.legend()
+
+    figD.tight_layout()
+    figD.savefig('figures_writting/sim_outputs/sim_davisrequest_horizon_scan.png')
+    plt.close(figD)
+
+    figD_power, axD_power = plt.subplots(figsize=(9, 5))
+    for horizon_value, t_d, _, u_d, _ in davis_results:
+        label = f"H={horizon_value:.0f}s"
+        axD_power.plot(t_d, u_d[:, center_flat], label=label)
+    axD_power.axhline(params.P_MAX, color='r', linestyle='--', alpha=0.6, label='Saturation')
+    axD_power.set_title('Davis Request: Center Heater Power vs Horizon')
+    axD_power.set_ylabel('Power (W)')
+    axD_power.set_xlabel('Time (s)')
+    axD_power.grid(True)
+    axD_power.legend()
+    figD_power.tight_layout()
+    figD_power.savefig('figures_writting/sim_outputs/sim_davisrequest_horizon_scan_power.png')
+    plt.close(figD_power)
+
+    figD_error, axD_error = plt.subplots(figsize=(9, 5))
+    figD_delta, axD_delta = plt.subplots(figsize=(9, 5))
+    for horizon_value, _, _, _, diag in davis_results:
+        label = f"H={horizon_value:.0f}s"
+        diag_time = diag["time"]
+        axD_error.plot(diag_time, diag["error"][:, center_flat], label=label)
+        axD_delta.plot(diag_time, diag["delta"][:, center_flat], label=label)
+    axD_error.set_title('Davis Request: Center Error Component $e_C$')
+    axD_error.set_ylabel('Error Component')
+    axD_error.set_xlabel('Time (s)')
+    axD_error.grid(True)
+    axD_error.legend()
+    figD_error.tight_layout()
+    figD_error.savefig('figures_writting/sim_outputs/sim_davisrequest_horizon_scan_error.png')
+    plt.close(figD_error)
+
+    axD_delta.axhline(0.0, color='k', linestyle='--', alpha=0.4)
+    axD_delta.set_title('Davis Request: Center Δu (QS⁻¹ e_C)')
+    axD_delta.set_ylabel('Δu (W)')
+    axD_delta.set_xlabel('Time (s)')
+    axD_delta.grid(True)
+    axD_delta.legend()
+    figD_delta.tight_layout()
+    figD_delta.savefig('figures_writting/sim_outputs/sim_davisrequest_horizon_scan_delta.png')
+    plt.close(figD_delta)
+
+    weight_builders = [
+        ("Uniform", _uniform_weights),
+        ("Exponential", _exp_weights),
+    ]
+
+    figW, axesW = plt.subplots(len(weight_builders), 2, figsize=(10, 8), sharex=True)
+    for row_idx, (builder_label, builder_fn) in enumerate(weight_builders):
+        ax_temp = axesW[row_idx, 0]
+        ax_power = axesW[row_idx, 1]
+        for M_value in ALEJANDRO_M_VALUES:
+            prediction_fn = make_weighted_prediction_fn(M_value, builder_fn)
+            t_w, y_w, u_w, _ = simulate_mpc(
+                model_nearest,
+                y0_amb,
+                T_target_1,
+                horizon=MPC_HORIZON_AVG,
+                prediction_override_fn=prediction_fn,
+                record_interval=1,
+            )
+            series_label = f"M={M_value}"
+            ax_temp.plot(t_w, y_w[:, center_flat], label=series_label)
+            ax_power.plot(t_w, u_w[:, center_flat], label=series_label)
+
+        ax_temp.set_title(f'{builder_label} weights: Center Temperature')
+        ax_temp.set_ylabel('Temperature (°C)')
+        ax_temp.grid(True)
+        ax_temp.legend()
+
+        ax_power.set_title(f'{builder_label} weights: Center Power')
+        ax_power.set_ylabel('Power (W)')
+        ax_power.set_xlabel('Time (s)')
+        ax_power.grid(True)
+        ax_power.legend()
+
+    figW.tight_layout()
+    figW.savefig('figures_writting/sim_outputs/sim_alejandro_weighted_error_mpc.png')
+    plt.close(figW)
 
     print("Simulations Complete.")
 

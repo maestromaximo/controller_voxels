@@ -51,12 +51,11 @@ Every control region also has an associated heat capacity $c_i$ defining the ris
 The physical model that will drive analysis follows a simplified heat transfer model, approximating the potentially complex fluid dynamics or material properties with a linear differential equation, in the spirit of those such as Newton and Fourier. Namely, this model is built upon a modified version of Newton's law of cooling, including multiple sources/sinks via superposition of linear differential equations:
 \begin{align*}
     \dot{T}_i &= \sum_{j\neq i}^N\left(-k_{ij} (T_i - T_j)\right) + \sum_{j}^N \left(-\kappa_{ij} (T_i - \frac{1}{c_j^*}E_j)\right)
-\end{align*}\todo[inline]{comment on symmetry/lack thereof in $k_{ij}$?}
+\end{align*}
 Further, the transfer coefficients will be assumed to be time- and temperature-independent. This assumption is valid under the condition that the flow of fluid in $\mathcal{V}$ is steady and the range of temperatures is not extreme. These details are out of the scope of this work, and will not be discussed further. The first term describes the heat flow from advection, diffusion, \emph{etcetera} between $\mathcal{V}_i$ to $\mathcal{V}_j$ or vice versa, and the second term describes the heating effect on $\mathcal{V}_i$ from heater $j$. Assuming radiative heating is negligible, all but one of the summands in the second term can be neglected:
 \begin{align}
     \dot{T}_i &\approx \sum_{j\neq i}^N\left(-k_{ij} \left(T_i - T_j\right)\right)  -\kappa_{i} \left(T_i - \frac{1}{c_i^*}E_i\right) - k_{i}^e(T_i - T_{i}^e)\label{eqn:coolinglaw} 
 \end{align}
-\todo[inline]{fix LQR section with environmental bits}
 where $\kappa_i\equiv\kappa_{ii}$ is defined for convenience, and $T_i^e$ denotes the effective temperature associated with environmental heat loss or gain. Conservation of energy, then yields the following:
 \begin{align*}
     \dot{E}_i &= -\kappa_i (E_i - c_i^*T_i)
@@ -163,7 +162,9 @@ the constant terms cancel and we obtain the homogeneous deviation dynamics
 \delta\dot{T}_i &=
   -\sum_{j\neq i} k_{ij}(\delta T_i-\delta T_j)
   -\kappa_i\,\delta T_i
-  +\frac{\kappa_i}{c_i^*}\,\delta E_i, \label{eq:deltaT_dyn}\\[2pt]
+  +\frac{\kappa_i}{c_i^*}\,\delta E_i
+  -k_i^e \delta T_i,
+  \label{eq:deltaT_dyn}\\[2pt]
 \delta\dot{E}_i &=
   \kappa_i c_i^*\,\delta T_i
   -\kappa_i\,\delta E_i
@@ -205,7 +206,7 @@ where the entries of the blocks are
 (\mathbf{A}_{TT})_{ij}
 &=
 \begin{cases}
--\displaystyle\sum_{j'\neq i} k_{ij'} - \kappa_i, & i=j,\\[6pt]
+-\displaystyle\sum_{j'\neq i} k_{ij'} - \kappa_i - k_i^e, & i=j,\\[6pt]
 k_{ij}, & i\neq j,
 \end{cases}
 \label{eq:ATT_entries}\\[4pt]
@@ -372,38 +373,40 @@ LQR controllers are ubiquitous, though a more general approach is required to se
 
 For the generalised problem statement consisting of a cost function dependent on the state vector, inputs, rates of change of either, and constraints thereon, the MPC is typically not analytically solvable. Instead, iterative approaches are used; a rich portion of the existing literature is focussed on convergence, existence and uniqueness of solutions, stability, and computational complexity. 
 
-In the case, however, of an optimal control problem with a cost of the squared errors between a target state and the state at some time $\tau$ in the future, under constraints on controlled variables only, there does exist an analytical solution. We will use this to build the solution to our discretised problem:
+In the case, however, of an optimal control problem with a cost of the squared errors between a target state and the state at some time $\tau$ in the future, under constraints on controlled variables only, there does exist an analytical solution. We will use this to build the solution to our discretised problem, leveraging the error-state formulation developed previously:
 
 \begin{align}
-  \text{Find control sequence}\quad &\Delta\vu[t] = \arg\min_{\Delta\vec{u'}[t]\in\Omega'} J(\vec{u'}[t]),\\[4pt]
-  J(\Delta\vu[t]) &= \sum_{n=1}^{\tau} \Big( (\vy(n\Delta t)-\vys)^\text{T} \mathbf{Q}\, (\vy(n\Delta t)-\vys)\Big)\,,\\[6pt]
-  \text{subject to}\quad &\dot{\vy}(t) = \mathbf{A}\,\vy(t) + \mathbf{B}\,\vut + \mathbf{E},\\[4pt]
-  \text{and}\quad& \Omega' \equiv [-u_i(t), p_i-u_i(t)]^N,
+  \text{Find control move sequence}\quad &\delta\vu(t) = \arg\min_{\delta\vec{u'}[t]\in\Omega'} J(\delta \vec{u'}[t]),\\[4pt]
+  J(\delta\vu(t)) &= \sum_{n=1}^{\tau} \Big( (\delta\vy(n\Delta t))^\text{T} \mathbf{Q}\, (\delta\vy(n\Delta t))\Big)\,,\\[6pt]
+  \text{subject to}\quad &\delta\dot{\vy}(t) = \mathbf{A}\,\delta\vy(t) + \mathbf{B}\,\delta\vut,\\[4pt]
+  \text{and}\quad& \Omega' \equiv [-u_i^*, p_i-u_i^*]^N,
 \end{align}
-with $\Delta \vec{u}[t]=\vec{u}[t+1]-\vec{u}[t]$ defining discrete changes in $\vu(t)$ taking place at time $t$.
+where $\delta \vy[n]=\vy(n\Delta t)-\vys$ is the sampled error state, $\delta \vu[n]=\vu(n\Delta t)-\vu^{\,*}$ is the deviation input, and the discrete control move is $\Delta \vu[n]=\delta\vu[n]-\delta\vu[n-1]$. The box constraints $\Omega'$ are precisely the bounds in~\eqref{eq:delta_u_constraints} expressed in deviation coordinates.
 
-Being somewhat out of scope and primarily results of quadratic programming, we will use the results of Ref.~\cite{gupta1997analytical} without proof: For step response matrix $\mathbf{S}$, diagonal cost matrix $\mathbf{Q}$, the optimal control move at current time $t$ is
+Being somewhat out of scope and primarily results of quadratic programming, we will use the results of Ref.~\cite{gupta1997analytical} without proof: For the step response matrix $\mathbf{S}$ (derived in Appendix~\ref{appendix:trajectories}), and a diagonal cost matrix $\mathbf{Q}$, the optimal control move at current time $t$ is
 \begin{align}
-    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}(\vec{e}_C)\label{eqn:solution_out_of_bounds}
+    \Delta \vu[t]&=(\mathbf{Q} \mathbf{S})^{-1}\vec{e}_C,\label{eq:mpc_control_move}
 \end{align}
-constrained to $\Delta \vu \in [-\vu, \vec{p}-\vu]$ at every timestep, where $\vec{e}_C$ is the projected error for the state at the time horizon without further control moves (see Appendix~\ref{appendix:geometrical_mpc}),
+with $\Delta \vu$ constrained elementwise as in~\eqref{eq:delta_u_constraints}.  The correction vector is
 \begin{align}
-    \vec{e}_C&=\mathbf{Q} (\vys - \vy_\text{traj}[t+H])
+    \vec{e}_C&=\mathbf{Q}\big(\delta\vy^{\,*}-\delta\vy_{\text{proj}}[t+H]\big)
+              =-\mathbf{Q}\,\delta\vy_{\text{proj}}[t+H],
 \end{align}
-are the predicted error at the horizon without a control move and with the control move $\Delta \vu$ respectively, and $\vy_\text{traj}[t+H]$ is the predicted state arising at the time horizon, arising from only previous control moves: (see Appendix~\ref{appendix:trajectories}, eqn.~\ref{eqn:trajectoryprediction})
+since the steady error $\delta\vy^{\,*}$ is the origin in deviation coordinates.  The projected error state at the horizon $H$ now carries the deviation notation explicitly,
 \begin{align}
-    \vy_\text{traj}[t+H]
+    \delta\vy_{\text{proj}}[t+H]
         &=\mathbf{A}^{-1} 
-        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \vu + \mathbf{E} \right)
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B}\,\delta \vu(t)
         +
-        \mathbf{\Phi}(H)\vec{y}(t)
+        \mathbf{\Phi}(H)\,\delta\vec{y}(t),
+        \label{eq:delta_y_proj}
 \end{align}
-This provides an optimal controller to calculate a control move $\Delta \vu$ at every timestep as in equation~\ref{eqn:solution_out_of_bounds} and $\Delta \vu$ further constrained as discussed.
+which matches the nominal expression from Appendix~\ref{appendix:trajectories} because the linearised deviation dynamics remove the constant forcing terms.  Consequently, the step-response matrix retaining the familiar form $\mathbf{S}=\mathbf{A}^{-1}\left(\mathbf{\Phi}(H)-\mathds{1}\right)\mathbf{B}$ makes intuitive sense: in deviation space, the future prediction depends only on the current error and the incremental move.  Equations~\eqref{eq:mpc_control_move}--\eqref{eq:delta_y_proj} therefore provide an implementable controller that computes $\Delta \vu$ at every timestep while respecting the box constraints.
 
 \section{Alejandro,}
 \begin{itemize}
     \item Please simulate MPC response with several different solutions: one with horizon of some average $\tau$ and one with horizon of $\max(\tau)$
-    \item Also another one with $e_C=\mathbf{Q}\left(\vys - \sum_m^M \vy_\text{traj}[t + n\Delta t] f[n]\right)$ for several different $M$, and $f[m]=1/M$, $f[m]=(e^{(m/M-1)})/\sum_i^M e^{(i/M-1)}$ (i.e., just some \emph{normalized} weight functions)
+    \item Also another one with $e_C=\mathbf{Q}\left(\vys - \sum_m^M \delta\vy_{\text{proj}}[t + n\Delta t] f[n]\right)$ for several different $M$, and $f[m]=1/M$, $f[m]=(e^{(m/M-1)})/\sum_i^M e^{(i/M-1)}$ (i.e., just some \emph{normalized} weight functions)
 \end{itemize}
 
 
@@ -453,7 +456,7 @@ Each of these blocks can be described as follows:
     \item heat transfer from $\mathcal{V}_j$ to $\mathcal{V}_i$, $\Lambda_{ij}=k_{ij}$ (dimensionless), 
     \item heat transfer from $E_i$ to $\mathcal{V}_i$, $\Psi_{ii}\approx\frac{\kappa_i}{c^*_i}$ (dimensions of inverse heat capacity),
     \item heat transfer from $\mathcal{V}_i$ to heater mass $E_i$, $\Phi_{ii}\approx\kappa_i c^*_i$ (dimensions of heat capacity),
-    \item heat loss from $\mathcal{V}_i$ to other subvolumes, the heater mass, and environment, $\Lambda'_{ii}=-\kappa_i- - k_i^e-\sum_{j\neq i} k_{ij}$ (dimensionless), and
+    \item heat loss from $\mathcal{V}_i$ to other subvolumes, the heater mass, and environment, $\Lambda'_{ii}=-\kappa_i - k_i^e-\sum_{j\neq i} k_{ij}$ (dimensionless), and
     \item heat loss from $E_i$ to its subvolume $\mathcal{V}_i$, $\Delta_{ii}\approx -\kappa_i$ (dimensionless)
 \end{enumerate}% heat transfer from subvolume j to subvolume i
 Further, the $\mathbf{B}$ matrix is diagonal, and describes the heat energy added to a heater indexed by $i$ per unit time, i.e., the input power is passed through to the state elements corresponding to $E_i$: 
@@ -469,56 +472,44 @@ $\mathbf{E}$ is simply a vector, $\mathbf{E}=(\ k_1^e T_1^e \ \ k_2^e T_2^e \ \ 
 
 \subsection{Derivation of Trajectory and Step Response}\label{appendix:trajectories}
 
-The system evolves according to the linear, piecewise-constant coefficient, non-homogeneous equation~\ref{eqn:evolutionlaw}. The homogeneous solution for $\dot\vec{y}=\mathbf{A} \vec{y}$ is trivially $\vec{y}_H(t)=\mathbf{\Phi}(t)\vec{y}_0$ with $\mathbf{\Phi}(t)=e^{\mathbf{A} t}$, and we will assume a particular solution of form $\vec{y}_P(t)=\mathbf{\Phi}(t) \vec{v}(t)$. Plugging this into the original evolution law, and breaking the integral involving $\vec{u}(t)$ into domains where $\vec{u}$ remains constant, yields a formula:
+The system evolves according to the linear, piecewise-constant coefficient, non-homogeneous equation~\ref{eqn:evolutionlaw}. The homogeneous solution for $\delta\dot\vec{y}=\mathbf{A} \delta\vec{y}$ is trivially $\delta\vec{y}_H(t)=\mathbf{\Phi}(t)\delta\vec{y}_0$ with $\mathbf{\Phi}(t)=e^{\mathbf{A} t}$, and we will assume a particular solution of form $\delta\vec{y}_P(t)=\mathbf{\Phi}(t) \vec{v}(t)$. Plugging this into the original evolution law, and breaking the integral involving $\delta\vec{u}(t)$ into domains where $\delta\vec{u}$ remains constant, yields a formula:
 \begin{align*}
-    \vec{v}(t)&=\mathbf{\Phi}(t)\int_0^t \mathbf{\Phi}^{-1}(t') (\mathbf{B} \vec{u}(t) + \mathbf{E}) dt\\
+    \vec{v}(t)&=\mathbf{\Phi}(t)\int_0^t \mathbf{\Phi}^{-1}(t') (\mathbf{B} \delta\vec{u}(t)) dt\\
     &=(\cdots)\\
     &=\mathbf{A}^{-1} 
         \left( \sum_{n=1}^{t/\Delta t}\left(\Big( 
             \mathbf{\Phi}\left(t - (n-1)\Delta t\right) - 
             \mathbf{\Phi}\left(t - n \Delta t\right)
-            \Big) \mathbf{B} \vec{u}[n]\right) + 
-            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
+            \Big) \mathbf{B} \delta\vec{u}[n]\right) 
         \right)
 \end{align*}
-Which could possibly have been intuited, and can easily be interpreted as exponentially-decaying weightings on past inputs with an additional perturbation from $\mathbf{E}$. To satisfy the initial condition $\vec{y}_0$, the full solution is then
+Which could possibly have been intuited, and can easily be interpreted as exponentially-decaying weightings on past inputs (with an additional perturbation from $\mathbf{E}$, should we have not worked with the error state). To satisfy the initial condition $\delta\vec{y}_0$, the full solution is then
 \begin{align}
-    \vec{y}(t)&=\mathbf{A}^{-1} 
-        \left( \sum_{n=1}^{t/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vec{u}[n]\right) + 
-            \Big(\mathbf{\Phi}(t)-\mathds{1}\Big)\mathbf{E} 
-        \right)
-        +
-        \mathbf{\Phi}(t)\vec{y}_0\label{eqn:trajectoryprediction}
+    \delta\vec{y}(t)&=
+        \mathbf{\Phi}(t)\delta\vec{y}_0+
+         \mathbf{A}^{-1} \sum_{n=1}^{t/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \delta\vec{u}[n]\right)
+        \label{eqn:trajectoryprediction}
 \end{align}
 defining $\Delta\mathbf{\Phi}[n]=\Big( 
             \mathbf{\Phi}\left(t - (n-1)\Delta t\right) - 
             \mathbf{\Phi}\left(t - n \Delta t\right)
             \Big)$. 
-Is is notable that $\mathbf{A}^{-1}$ is known to exist in our case, since the underlying physical system is assumed to be valid, and thus the rank of the matrix is exactly equal to its dimension.
+Is is notable that $\mathbf{A}^{-1}$ is known to exist in our case, since the underlying physical system is assumed to be valid, and thus the rank of the matrix is exactly equal to its dimension. Further, $\mathbf{A}^{-1}$ commutes with $\mathbf{\Phi}$ 
 
-Further, we can now derive the step response of the system; for input $\vu$ from time $t=0$ to $t=H$, with no previous inputs, the state will evolve as:
+Further, we can now derive the step response of the system; for $\delta\vu$ from time $t=0$ to $t=H$, with previous input $\delta u=0$ (corresponding to $\vy_\text{opt}$), the state will evolve as:
 \begin{align}
-    \vy_\text{step}(H) &= \mathbf{A}^{-1} 
-        \left( \sum_{n=1}^{H/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \vu\right) + 
-            \Big(\mathbf{\Phi}(H)-\mathds{1}\Big)\mathbf{E} 
-        \right)
-        +
-        \mathbf{\Phi}(H)\vec{y}_0\nonumber
+    \delta\vy_\text{step}(H) &= 
+        \mathbf{\Phi}(H)\vec{y}_0+\mathbf{A}^{-1} 
+        \left( \sum_{n=1}^{H/\Delta t}\left(\Delta \mathbf{\Phi}[n] \mathbf{B} \delta\vu\right) 
+        \right)\nonumber
         \\
-        &=\mathbf{A}^{-1} 
-        \left( \sum_{n=1}^{H/\Delta t}\left(\Delta \mathbf{\Phi}[n] \right)\mathbf{B} \vu + 
-            \Big(\mathbf{\Phi}(H)-\mathds{1}\Big)\mathbf{E} 
-        \right)
-        +
-        \mathbf{\Phi}(H)\vec{y}_0\nonumber \\
-        &=\mathbf{A}^{-1} 
-        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \vu + \mathbf{E} \right)
-        +
-        \mathbf{\Phi}(H)\vec{y}_0\\
-    (\vy_\text{step}(H) - \vy_\text{passive}(H)) &= \mathbf{A}^{-1} 
-        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B} \vu\label{eqn:stepresponse}
+        &=\mathbf{\Phi}(H)\vec{y}_0+\mathbf{A}^{-1} 
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\left(\mathbf{B} \delta\vu \right)
+        \\
+    (\vy_\text{step}(H) - \vy_\text{opt}(H)) &= \mathbf{A}^{-1} 
+        \left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B} \delta\vu\label{eqn:stepresponse}
 \end{align}
-This result is, of course, equivalent to changing $\vu(t)$ by some $\Delta \vu$ at time $t=0$. Hence, the step response matrix is
+This result is, of course, equivalent to changing $\delta\vu(t)$ by some $\Delta \vu$ at time $t=0$. Hence, the step response matrix is
 \begin{align}
     \mathbf{S}&=\mathbf{A}^{-1}\left(\mathbf{\Phi}(H) - \mathds{1}\right)\mathbf{B}.
 \end{align}

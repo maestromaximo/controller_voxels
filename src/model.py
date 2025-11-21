@@ -47,7 +47,7 @@ class ThermalModel2D:
         self.selector_T = np.hstack([
             np.eye(self.num_voxels),
             np.zeros((self.num_voxels, self.num_voxels))
-        ])
+        ]) #not used anymore
         self._phi_cache = {}
         self._step_response_cache = {}
         
@@ -167,34 +167,42 @@ class ThermalModel2D:
 
     def get_steady_state(self, T_targets: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calculate steady state state (y_star) and input (u_star) for a desired temperature profile.
+        Closed-form steady state based on the analytical expressions in the paper:
+            u_i^* = c_i^* ( Σ_{j≠i} k_{ij}(T_i^* - T_j^*) + k_i^e (T_i^* - T_i^e) )
+            E_i^* = c_i^* ( T_i^* + (1/κ_i)( Σ_{j≠i} k_{ij}(T_i^* - T_j^*) + k_i^e (T_i^* - T_i^e) ) )
         """
-        N = self.num_voxels
-        A = self.sys.A
-        E = self.sys.E
-        
         T_star = T_targets.flatten()
-        
-        # Extract blocks
-        A_TL = A[:N, :N] # (L + L')
-        A_TR = A[:N, N:] # Psi
-        A_BL = A[N:, :N] # Phi
-        A_BR = A[N:, N:] # Delta
-        
-        E_top = E[:N]
-        
-        # Solve for E_star using upper block
-        # A_TR @ E_star = -A_TL @ T_star - E_top
-        # A_TR is diagonal, so inversion is easy.
-        rhs = -A_TL @ T_star - E_top
-        psi_diag = np.diag(A_TR)
-        E_star = rhs / psi_diag
-        
-        # Solve for u_star using lower block
-        u_star = - (A_BL @ T_star + A_BR @ E_star)
-        
+        N = self.num_voxels
+
+        kappa = self.config['kappa']
+        k_env = self.config['k_env']
+        c_h = self.config['c_h']
+        temp_env = self.config['temp_ambient']
+
+        if self.coupling_mode == 'nearest':
+            neighbor_fn = self._get_neighbors_nearest
+        elif self.coupling_mode == 'distance':
+            neighbor_fn = self._get_neighbors_distance
+        else:
+            raise ValueError(f"Unknown coupling mode: {self.coupling_mode}")
+
+        E_star = np.zeros(N)
+        u_star = np.zeros(N)
+
+        for idx in range(N):
+            T_i_star = T_star[idx]
+            coupling_sum = 0.0
+
+            for j_idx, k_val in neighbor_fn(idx):
+                coupling_sum += k_val * (T_i_star - T_star[j_idx])
+
+            env_term = k_env * (T_i_star - temp_env)
+            total_term = coupling_sum + env_term
+
+            u_star[idx] = c_h * total_term
+            E_star[idx] = c_h * (T_i_star + total_term / kappa)
+
         y_star = np.concatenate([T_star, E_star])
-        
         return y_star, u_star
 
     def design_lqr(self, Q_temp_weight=1.0, Q_energy_weight=0.0, R_weight=0.01):
@@ -284,7 +292,7 @@ class ThermalModel2D:
 
     def predict_state(self, y_current: np.ndarray, u_current: np.ndarray, horizon: float) -> np.ndarray:
         """
-        Implements Eq. (395)-(399) from the manuscript:
+        Implements the formulation in the paper:
             y_traj[t+H] = A^{-1}(Φ(H) - I)(B u + E) + Φ(H) y(t)
         """
         Phi = self._phi(horizon)
@@ -292,9 +300,21 @@ class ThermalModel2D:
         forcing = self.sys.B @ u_current + self.sys.E
         return self._A_inv @ ((Phi - identity) @ forcing) + Phi @ y_current
 
+    def predict_error_state(self,
+                            delta_y_current: np.ndarray,
+                            delta_u_current: np.ndarray,
+                            horizon: float) -> np.ndarray:
+        """
+        Deviation-state variant of predict_state:
+            δy[t+H] = A^{-1}(Φ(H) - I) B δu(t) + Φ(H) δy(t)
+        """
+        Phi = self._phi(horizon)
+        identity = np.eye(self.sys.A.shape[0])
+        forcing = self.sys.B @ delta_u_current
+        return self._A_inv @ ((Phi - identity) @ forcing) + Phi @ delta_y_current
+
     def compute_step_response_matrix(self, horizon: float) -> np.ndarray:
         """
-        Implements Eq. (523):
             S = 𝔅 A^{-1} (Φ(H) - I) B
         where 𝔅 selects the temperature components.
         """
@@ -312,21 +332,45 @@ class ThermalModel2D:
                  step_response: Optional[np.ndarray] = None,
                  q_matrix: Optional[np.ndarray] = None,
                  qs_solver: Optional[np.ndarray] = None,
+                 y_pred_override: Optional[np.ndarray] = None,
+                 u_target: Optional[np.ndarray] = None,
                  return_error: bool = False):
         """
-        Single MPC move following Eqs. (377)-(398):
+        Single MPC move following the formulation in the paper:
             Δu = (Q S)^{-1} e_C
             e_C = Q (y* - y_traj[t+H])
         Subject to Δu ∈ [-u(t), p - u(t)].
         """
         if step_response is None:
+            # Pre-compute the continuous-time step response matrix S(H) = A^{-1}(Φ(H)-I)B
+            # so that the linear solve (Q S)^{-1} e_C can reuse it each timestep.
             step_response = self.get_step_response_matrix(horizon)
         if q_matrix is None:
+            # Build the diagonal Q weighting matrix from q_diag so that Q = diag(q_diag).
             q_matrix = np.diag(q_diag)
 
-        y_pred = self.predict_state(y_current, u_current, horizon)
-        e_C = q_matrix @ (y_target - y_pred)
+        if u_target is None:
+            raise ValueError("mpc_step requires u_target to compute deviation coordinates.")
 
+        # Express current state/input as deviations from the steady point (y*, u*).
+        delta_y_current = y_current - y_target
+        delta_u_current = u_current - u_target
+
+        # Predict the state deviation at the horizon either by using an override
+        # (e.g., weighted predictor) or by propagating with the linear model:
+        if y_pred_override is not None:
+            delta_y_pred = y_pred_override - y_target
+        else:
+            delta_y_pred = self.predict_error_state(
+                delta_y_current=delta_y_current,
+                delta_u_current=delta_u_current,
+                horizon=horizon,
+            )
+
+        # Project the horizon error onto the cost: e_C = Q (0 - δy_pred) = -Q δy_pred.
+        e_C = -q_matrix @ delta_y_pred
+
+        # Solve Δu = (Q S)^{-1} e_C, optionally using a cached/analytical inverse.
         if qs_solver is not None:
             delta_u = qs_solver @ e_C
         else:
@@ -339,11 +383,13 @@ class ThermalModel2D:
             else:
                 delta_u = np.linalg.pinv(QS) @ e_C
 
-        lower_bounds = -u_current
-        upper_bounds = p_max - u_current
-
+        # Clip the move Δu directly using bounds expressed in terms of the current input
+        # and the steady reference: Δu ∈ [-u(t) - u*, p_max - u(t) - u*].
+        lower_bounds = -delta_u_current
+        upper_bounds = p_max - delta_u_current
         delta_u = np.clip(delta_u, lower_bounds, upper_bounds)
-
+        
         if return_error:
+            # Expose both the clipped control move and the quadratic error signal.
             return delta_u, e_C
         return delta_u

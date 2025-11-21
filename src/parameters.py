@@ -46,5 +46,5 @@ KAPPA = COND_HEATER_AIR / VOXEL_HEAT_CAPACITY # ~0.06 s^-1
 K_ENV = K_NEIGHBOR # s^-1
 
 # System Limits
-P_MAX = 5.0 # Watts
+P_MAX = 25.0 # Watts
 TEMP_AMBIENT = 20.0 # Celsius
